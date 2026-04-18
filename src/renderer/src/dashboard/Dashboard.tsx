@@ -93,6 +93,7 @@ export function Dashboard(): ReactElement {
   const handleRegenerate = async (): Promise<void> => {
     if (!selected || !selected.raw_transcript.trim()) return
     setRegenerating(true)
+    const startedAt = Date.now()
     try {
       const { summary, actionItems } = await window.meetnotes.regenerateSummary(
         selected.raw_transcript
@@ -101,7 +102,8 @@ export function Dashboard(): ReactElement {
         ...selected,
         summary,
         action_items: actionItems,
-        status: 'ready'
+        status: 'ready',
+        processing_ms: Date.now() - startedAt
       })
       await refresh()
     } finally {
@@ -190,8 +192,16 @@ export function Dashboard(): ReactElement {
             {!isEditing && (
               <>
                 <header className="mb-8">
-                  <div className="text-xs uppercase tracking-wider text-slate-400 mb-2">
-                    {formatHeaderDate(selected.created_at)}
+                  <div className="text-xs uppercase tracking-wider text-slate-400 mb-2 flex items-center gap-2">
+                    <span>{formatHeaderDate(selected.created_at)}</span>
+                    {typeof selected.processing_ms === 'number' && selectedStatus === 'ready' && (
+                      <>
+                        <span className="text-slate-300">·</span>
+                        <span title="Tempo de transcrição + resumo" className="normal-case tracking-normal text-slate-500">
+                          processado em {formatDuration(selected.processing_ms)}
+                        </span>
+                      </>
+                    )}
                   </div>
                   <h2 className="text-4xl font-bold text-slate-900 leading-tight tracking-tight">
                     {selected.title}
@@ -416,7 +426,7 @@ export function Dashboard(): ReactElement {
         )}
       </main>
 
-      {ctxMenu && (
+      {ctxMenu && (ctxMenu.meeting.status ?? 'ready') !== 'processing' && (
         <div
           className="fixed z-50 min-w-[160px] bg-white border border-slate-200 rounded-lg shadow-xl py-1 text-sm"
           style={{ left: ctxMenu.x, top: ctxMenu.y }}
@@ -470,6 +480,14 @@ function formatHeaderDate(iso: string): string {
     day: '2-digit',
     month: 'short'
   })
+}
+
+function formatDuration(ms: number): string {
+  const totalSec = Math.max(0, Math.round(ms / 1000))
+  if (totalSec < 60) return `${totalSec}s`
+  const m = Math.floor(totalSec / 60)
+  const s = totalSec % 60
+  return s === 0 ? `${m}min` : `${m}min ${s}s`
 }
 
 function splitTranscript(text: string): string[] {

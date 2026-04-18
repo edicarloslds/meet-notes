@@ -6,8 +6,19 @@ export function Pill(): ReactElement {
   const [title, setTitle] = useState<string>('Reunião detectada')
   const [elapsed, setElapsed] = useState(0)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [pending, setPending] = useState<'start' | 'stop' | null>(null)
+  const [showSpinner, setShowSpinner] = useState(false)
   const tickRef = useRef<number | null>(null)
   const { start, stop, isRecording, stream } = useAudioRecorder()
+
+  useEffect(() => {
+    if (!pending) {
+      setShowSpinner(false)
+      return
+    }
+    const id = window.setTimeout(() => setShowSpinner(true), 150)
+    return () => window.clearTimeout(id)
+  }, [pending])
 
   useEffect(() => {
     const off = window.meetnotes.onMeetingDetected((p) => {
@@ -33,13 +44,17 @@ export function Pill(): ReactElement {
   }, [isRecording])
 
   const handleStart = async (): Promise<void> => {
+    if (pending) return
     setErrorMsg(null)
+    setPending('start')
     try {
       await start()
     } catch (err) {
       console.error('Failed to start recording:', err)
       const msg = err instanceof Error ? err.message : String(err)
       setErrorMsg(/permission|denied|notallowed/i.test(msg) ? 'Permissão negada' : 'Falha ao gravar')
+    } finally {
+      setPending(null)
     }
   }
 
@@ -51,10 +66,12 @@ export function Pill(): ReactElement {
   }
 
   const handleStop = async (): Promise<void> => {
+    if (pending) return
     if (!isRecording) {
       window.meetnotes.closePill()
       return
     }
+    setPending('stop')
     const placeholder: Meeting = {
       id: crypto.randomUUID(),
       user_id: null,
@@ -108,10 +125,15 @@ export function Pill(): ReactElement {
 
             <button
               onClick={() => void handleStop()}
+              disabled={pending !== null}
               title="Parar gravação"
-              className="shrink-0 h-8 px-3 flex items-center gap-1.5 rounded-full bg-red-500 hover:bg-red-400 text-white text-xs font-medium transition"
+              className="shrink-0 h-8 px-3 flex items-center gap-1.5 rounded-full bg-red-500 hover:bg-red-400 disabled:opacity-70 disabled:cursor-wait text-white text-xs font-medium transition"
             >
-              <span className="w-2.5 h-2.5 rounded-sm bg-white" />
+              {pending === 'stop' && showSpinner ? (
+                <Spinner />
+              ) : (
+                <span className="w-2.5 h-2.5 rounded-sm bg-white" />
+              )}
               Parar
             </button>
           </>
@@ -128,9 +150,14 @@ export function Pill(): ReactElement {
 
             <button
               onClick={() => void handleStart()}
-              className="shrink-0 h-8 px-3 flex items-center gap-1.5 rounded-full bg-emerald-500 hover:bg-emerald-400 text-white text-xs font-medium transition"
+              disabled={pending !== null}
+              className="shrink-0 h-8 px-3 flex items-center gap-1.5 rounded-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-70 disabled:cursor-wait text-white text-xs font-medium transition"
             >
-              <span className="w-2 h-2 rounded-full bg-white" />
+              {pending === 'start' && showSpinner ? (
+                <Spinner />
+              ) : (
+                <span className="w-2 h-2 rounded-full bg-white" />
+              )}
               Iniciar
             </button>
 
@@ -147,6 +174,15 @@ export function Pill(): ReactElement {
         )}
       </div>
     </div>
+  )
+}
+
+function Spinner(): ReactElement {
+  return (
+    <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity="0.25" strokeWidth="3" />
+      <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+    </svg>
   )
 }
 

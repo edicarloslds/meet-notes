@@ -166,6 +166,7 @@ app.whenReady().then(async () => {
     IpcChannels.ProcessAndSave,
     (_e, placeholder: Meeting, audioBuffer: ArrayBuffer) => {
       void (async (): Promise<void> => {
+        const startedAt = Date.now()
         try {
           const result = await transcribeAndSummarize(Buffer.from(audioBuffer))
           await saveMeeting({
@@ -173,7 +174,8 @@ app.whenReady().then(async () => {
             raw_transcript: result.transcript,
             summary: result.summary,
             action_items: result.actionItems,
-            status: 'ready'
+            status: 'ready',
+            processing_ms: Date.now() - startedAt
           })
         } catch (err) {
           console.warn('process-and-save failed:', err)

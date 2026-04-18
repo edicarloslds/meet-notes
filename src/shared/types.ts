@@ -10,6 +10,7 @@ export interface Meeting {
   created_at: string
   synced?: boolean
   status?: 'processing' | 'ready' | 'failed'
+  processing_ms?: number
 }
 
 export interface ActionItem {

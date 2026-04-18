@@ -4,6 +4,7 @@ import { Meeting } from '../shared/types'
 interface StoreSchema {
   meetings: Meeting[]
   pending: Meeting[]
+  deleted: string[]
 }
 
 type StoreInstance = {
@@ -19,7 +20,7 @@ function getStore(): Promise<StoreInstance> {
     const { default: Store } = await import('electron-store')
     return new Store<StoreSchema>({
       name: 'meetnotes',
-      defaults: { meetings: [], pending: [] }
+      defaults: { meetings: [], pending: [], deleted: [] }
     }) as unknown as StoreInstance
   })()
   return storePromise
@@ -104,35 +105,58 @@ export async function deleteMeeting(id: string): Promise<void> {
   const store = await getStore()
   store.set('meetings', store.get('meetings').filter((m) => m.id !== id))
   store.set('pending', store.get('pending').filter((m) => m.id !== id))
+  const tombstones = store.get('deleted')
+  if (!tombstones.includes(id)) store.set('deleted', [...tombstones, id])
   const client = getSupabase()
   if (!client) return
   const { error } = await client.from('meetings').delete().eq('id', id)
-  if (error) console.warn('Supabase delete error:', error.message)
+  if (error) {
+    console.warn('Supabase delete error:', error.message)
+    return
+  }
+  store.set('deleted', store.get('deleted').filter((d) => d !== id))
 }
 
 export async function listMeetings(): Promise<Meeting[]> {
   const store = await getStore()
   const local = store.get('meetings')
+  const tombstones = new Set(store.get('deleted'))
   const client = getSupabase()
-  if (!client) return local
+  if (!client) return local.filter((m) => !tombstones.has(m.id))
   try {
     const { data, error } = await client
       .from('meetings')
       .select('*')
       .order('created_at', { ascending: false })
       .limit(200)
-    if (error || !data) return local
+    if (error || !data) return local.filter((m) => !tombstones.has(m.id))
     const merged = new Map<string, Meeting>()
     for (const m of local) merged.set(m.id, m)
-    for (const row of data as Meeting[]) merged.set(row.id, { ...row, synced: true })
-    const list = Array.from(merged.values()).sort((a, b) =>
-      a.created_at < b.created_at ? 1 : -1
-    )
+    for (const row of data as Meeting[]) {
+      if (tombstones.has(row.id)) {
+        void client.from('meetings').delete().eq('id', row.id).then(({ error: delErr }) => {
+          if (!delErr) {
+            const remaining = store.get('deleted').filter((d) => d !== row.id)
+            store.set('deleted', remaining)
+          }
+        })
+        continue
+      }
+      const existing = merged.get(row.id)
+      merged.set(row.id, {
+        ...row,
+        processing_ms: row.processing_ms ?? existing?.processing_ms,
+        synced: true
+      })
+    }
+    const list = Array.from(merged.values())
+      .filter((m) => !tombstones.has(m.id))
+      .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
     store.set('meetings', list)
     return list
   } catch (err) {
     console.warn('listMeetings fallback to local:', err)
-    return local
+    return local.filter((m) => !tombstones.has(m.id))
   }
 }
 
