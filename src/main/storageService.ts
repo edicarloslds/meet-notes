@@ -1,5 +1,6 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
 import { Meeting } from '../shared/types'
+import { getSettingSync } from './settingsService'
 
 interface StoreSchema {
   meetings: Meeting[]
@@ -27,14 +28,26 @@ function getStore(): Promise<StoreInstance> {
 }
 
 let supabase: SupabaseClient | null = null
+let supabaseKey: string | null = null
 
 function getSupabase(): SupabaseClient | null {
-  if (supabase) return supabase
-  const url = import.meta.env.MAIN_VITE_SUPABASE_URL
-  const key = import.meta.env.MAIN_VITE_SUPABASE_ANON_KEY
-  if (!url || !key) return null
+  const url = getSettingSync('supabaseUrl')
+  const key = getSettingSync('supabaseAnonKey')
+  if (!url || !key) {
+    supabase = null
+    supabaseKey = null
+    return null
+  }
+  const cacheKey = `${url}::${key}`
+  if (supabase && supabaseKey === cacheKey) return supabase
   supabase = createClient(url, key)
+  supabaseKey = cacheKey
   return supabase
+}
+
+export function resetSupabaseClient(): void {
+  supabase = null
+  supabaseKey = null
 }
 
 async function upsertLocal(meeting: Meeting): Promise<void> {
@@ -115,6 +128,17 @@ export async function deleteMeeting(id: string): Promise<void> {
     return
   }
   store.set('deleted', store.get('deleted').filter((d) => d !== id))
+}
+
+export async function cleanupStaleProcessing(): Promise<string[]> {
+  const store = await getStore()
+  const all = store.get('meetings')
+  const stale = all.filter((m) => m.status === 'processing').map((m) => m.id)
+  if (stale.length === 0) return []
+  for (const id of stale) {
+    await deleteMeeting(id).catch(() => undefined)
+  }
+  return stale
 }
 
 export async function listMeetings(): Promise<Meeting[]> {

@@ -1,27 +1,63 @@
 import { spawn } from 'child_process'
-import { mkdtemp, readFile, rm, writeFile } from 'fs/promises'
+import { mkdtemp, readFile, rm, stat, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { ActionItem, ProcessAudioResult } from '../shared/types'
+import ffmpegStatic from 'ffmpeg-static'
+import {
+  ActionItem,
+  ProcessAudioResult,
+  StageName,
+  StageStatus,
+  WHISPER_NOT_READY_MARKER,
+  WhisperStatus
+} from '../shared/types'
+import { WHISPER_MODELS } from './modelDownloader'
 
-const OLLAMA_HOST = import.meta.env.MAIN_VITE_OLLAMA_HOST || 'http://127.0.0.1:11434'
-const OLLAMA_MODEL = import.meta.env.MAIN_VITE_OLLAMA_MODEL || 'gemma4:e2b'
-const WHISPER_BIN = import.meta.env.MAIN_VITE_WHISPER_BIN || 'whisper-cli'
-const WHISPER_MODEL = import.meta.env.MAIN_VITE_WHISPER_MODEL
-const WHISPER_LANGUAGE = import.meta.env.MAIN_VITE_WHISPER_LANGUAGE || 'pt'
-const FFMPEG_BIN = import.meta.env.MAIN_VITE_FFMPEG_BIN || 'ffmpeg'
+export type StageReporter = (stage: StageName, status: StageStatus, error?: string) => void
+import { getSettingSync } from './settingsService'
+
+const OLLAMA_HOST_DEFAULT = 'http://127.0.0.1:11434'
+const OLLAMA_MODEL_DEFAULT = 'gemma4:e2b'
+const WHISPER_BIN_DEFAULT = 'whisper-cli'
+const WHISPER_LANGUAGE_DEFAULT = 'pt'
+
+function resolveWhisperBin(): string {
+  return getSettingSync('whisperBin') || WHISPER_BIN_DEFAULT
+}
+
+function resolveFfmpegPath(): string {
+  if (!ffmpegStatic) throw new Error('ffmpeg-static não disponível; reinstale as dependências.')
+  return ffmpegStatic.replace('app.asar', 'app.asar.unpacked')
+}
 
 const SUMMARY_PROMPT = `Você é um assistente de notas de reunião. Responda SEMPRE em português do Brasil (pt-BR), independentemente do idioma da transcrição.
 
 A partir da transcrição bruta de uma reunião, produza um objeto JSON com DOIS campos separados:
 
-- "summary": string em Markdown contendo APENAS as seções **Contexto**, **Principais Decisões** e **Destaques da Discussão**. NÃO inclua tarefas, action items, próximos passos nem qualquer menção a "action_items" neste campo. Não repita o conteúdo do campo action_items aqui.
+- "summary": string em Markdown seguindo EXATAMENTE este formato, com três seções nesta ordem, cada uma em um parágrafo separado por linha em branco:
+
+## Contexto
+<um parágrafo de 2–4 frases>
+
+## Principais Decisões
+- <decisão 1>
+- <decisão 2>
+
+## Destaques da Discussão
+- <destaque 1>
+- <destaque 2>
+
+Regras do campo summary:
+- Use cabeçalhos "##" nas três seções (Contexto, Principais Decisões, Destaques da Discussão).
+- Separe seções com UMA linha em branco (\\n\\n).
+- Em "Principais Decisões" e "Destaques da Discussão", use lista com "-". Se não houver itens, escreva "- Nenhuma identificada.".
+- NÃO inclua tarefas, action items, próximos passos nem qualquer menção a "action_items" neste campo.
+
 - "action_items": array de objetos com os campos owner (string|null), task (string), due (data ISO|null). Se não houver tarefas, retorne [].
 
 Todo o conteúdo textual — títulos de seção, resumo e tarefas — deve estar em português do Brasil.
 
-Responda estritamente como JSON válido, sem texto antes ou depois, seguindo exatamente este shape:
-{"summary": "<markdown em pt-BR, sem seção de action items>", "action_items": [{"owner": "...", "task": "...", "due": "..."}]}`
+Responda estritamente como JSON válido, sem texto antes ou depois.`
 
 function extractJson(raw: string): string {
   const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)
@@ -32,12 +68,15 @@ function extractJson(raw: string): string {
   return raw
 }
 
-async function callOllama(transcript: string): Promise<string> {
-  const res = await fetch(`${OLLAMA_HOST}/api/chat`, {
+async function callOllama(transcript: string, signal?: AbortSignal): Promise<string> {
+  const host = getSettingSync('ollamaHost') || OLLAMA_HOST_DEFAULT
+  const model = getSettingSync('ollamaModel') || OLLAMA_MODEL_DEFAULT
+  const res = await fetch(`${host}/api/chat`, {
     method: 'POST',
+    signal,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: OLLAMA_MODEL,
+      model,
       stream: false,
       format: {
         type: 'object',
@@ -74,10 +113,11 @@ async function callOllama(transcript: string): Promise<string> {
 }
 
 export async function summarizeTranscript(
-  transcript: string
+  transcript: string,
+  signal?: AbortSignal
 ): Promise<{ summary: string; actionItems: ActionItem[] }> {
   if (!transcript.trim()) return { summary: '', actionItems: [] }
-  const raw = await callOllama(transcript)
+  const raw = await callOllama(transcript, signal)
   try {
     const parsed = JSON.parse(extractJson(raw))
     const summary = typeof parsed.summary === 'string' ? sanitizeSummary(parsed.summary) : ''
@@ -89,58 +129,243 @@ export async function summarizeTranscript(
   }
 }
 
+const SECTION_LABELS = ['Contexto', 'Principais Decisões', 'Destaques da Discussão']
+
 function sanitizeSummary(summary: string): string {
-  return summary
-    .replace(/"?action_items"?\s*[:=]?\s*\[[^\]]*\]/gi, '')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
+  let out = summary.replace(/"?action_items"?\s*[:=]?\s*\[[^\]]*\]/gi, '').trim()
+
+  const hasHeadings = /^#{1,3}\s+/m.test(out)
+  if (!hasHeadings) {
+    for (const label of SECTION_LABELS) {
+      const re = new RegExp(`(^|[\\s\\S])\\*{0,2}${escapeRegex(label)}\\*{0,2}\\s*:\\s*`, 'g')
+      out = out.replace(re, (_m, prefix: string) => {
+        const leading = prefix && !/\n$/.test(prefix) ? `${prefix}\n\n` : prefix || ''
+        return `${leading}## ${label}\n\n`
+      })
+    }
+  }
+
+  out = out.replace(/\n{3,}/g, '\n\n')
+  return out.trim()
 }
 
-function run(bin: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function run(
+  bin: string,
+  args: string[],
+  signal?: AbortSignal,
+  opts?: { logStderr?: boolean }
+): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const proc = spawn(bin, args)
+    if (signal?.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'))
+      return
+    }
+    const proc = spawn(bin, args, signal ? { signal } : {})
     let stdout = ''
     let stderr = ''
+    const tag = bin.split('/').pop() ?? bin
     proc.stdout.on('data', (d) => (stdout += d.toString()))
-    proc.stderr.on('data', (d) => (stderr += d.toString()))
+    proc.stderr.on('data', (d) => {
+      const s = d.toString()
+      stderr += s
+      if (opts?.logStderr) process.stderr.write(`[${tag}] ${s}`)
+    })
     proc.on('error', reject)
-    proc.on('close', (code) => {
+    proc.on('close', (code, sig) => {
+      if (signal?.aborted) {
+        reject(new DOMException('Aborted', 'AbortError'))
+        return
+      }
       if (code === 0) resolve({ stdout, stderr })
-      else reject(new Error(`${bin} exited with code ${code}: ${stderr || stdout}`))
+      else reject(new Error(`${bin} exited with code ${code ?? sig}: ${stderr || stdout}`))
     })
   })
 }
 
-async function transcribeWithWhisperCpp(audio: Buffer): Promise<string> {
-  if (!WHISPER_MODEL) {
-    throw new Error('MAIN_VITE_WHISPER_MODEL is not configured (path to whisper.cpp .bin model)')
-  }
-  const dir = await mkdtemp(join(tmpdir(), 'meetnotes-'))
+async function convertToWav(
+  audio: Buffer,
+  dir: string,
+  signal?: AbortSignal
+): Promise<string> {
+  const ffmpegBin = resolveFfmpegPath()
   const webmPath = join(dir, 'input.webm')
   const wavPath = join(dir, 'input.wav')
+  await writeFile(webmPath, audio)
+  await run(
+    ffmpegBin,
+    ['-y', '-i', webmPath, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wavPath],
+    signal
+  )
+  return wavPath
+}
+
+async function runWhisperOnWav(wavPath: string, dir: string, signal?: AbortSignal): Promise<string> {
+  const whisperModel = getSettingSync('whisperModel')
+  if (!whisperModel) {
+    throw new Error(`${WHISPER_NOT_READY_MARKER} Nenhum modelo do Whisper configurado. Abra Configurações e baixe um modelo.`)
+  }
+  if (!(await fileExists(whisperModel))) {
+    throw new Error(`${WHISPER_NOT_READY_MARKER} O arquivo do modelo não foi encontrado em ${whisperModel}. Baixe novamente em Configurações.`)
+  }
+  const whisperBin = resolveWhisperBin()
+  const whisperLanguage = getSettingSync('whisperLanguage') || WHISPER_LANGUAGE_DEFAULT
   try {
-    await writeFile(webmPath, audio)
-    await run(FFMPEG_BIN, ['-y', '-i', webmPath, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wavPath])
-    await run(WHISPER_BIN, [
-      '-m', WHISPER_MODEL,
-      '-f', wavPath,
-      '-l', WHISPER_LANGUAGE,
-      '-otxt',
-      '-of', join(dir, 'out'),
-      '-nt'
-    ])
-    const transcript = await readFile(join(dir, 'out.txt'), 'utf8')
-    return transcript.trim()
-  } finally {
-    await rm(dir, { recursive: true, force: true }).catch(() => undefined)
+    await run(
+      whisperBin,
+      ['-m', whisperModel, '-f', wavPath, '-l', whisperLanguage, '-otxt', '-of', join(dir, 'out'), '-nt'],
+      signal
+    )
+  } catch (err) {
+    if (isMissingBinaryError(err)) {
+      throw new Error(
+        `${WHISPER_NOT_READY_MARKER} Binário "${whisperBin}" não encontrado no PATH. Instale o whisper.cpp (ex.: brew install whisper-cpp) ou informe o caminho em Configurações.`
+      )
+    }
+    throw err
+  }
+  const transcript = await readFile(join(dir, 'out.txt'), 'utf8')
+  return transcript.trim()
+}
+
+function isMissingBinaryError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false
+  const e = err as { code?: string; message?: string }
+  if (e.code === 'ENOENT') return true
+  return typeof e.message === 'string' && /ENOENT|not found|não encontrado/i.test(e.message)
+}
+
+async function fileExists(p: string): Promise<boolean> {
+  try {
+    const s = await stat(p)
+    return s.isFile() && s.size > 0
+  } catch {
+    return false
   }
 }
 
-export async function transcribeAndSummarize(audio: Buffer): Promise<ProcessAudioResult> {
-  const transcript = await transcribeWithWhisperCpp(audio)
-  if (!transcript) {
-    return { transcript: '', summary: '', actionItems: [] }
+export function isWhisperNotReadyError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false
+  const msg = (err as { message?: string }).message
+  return typeof msg === 'string' && msg.includes(WHISPER_NOT_READY_MARKER)
+}
+
+export function stripNotReadyMarker(msg: string): string {
+  return msg.replace(WHISPER_NOT_READY_MARKER, '').trim()
+}
+
+export function isAbortError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false
+  const e = err as { name?: string; code?: string }
+  return e.name === 'AbortError' || e.code === 'ABORT_ERR'
+}
+
+export async function getWhisperStatus(): Promise<WhisperStatus> {
+  const status: WhisperStatus = { binAvailable: false }
+  const bin = resolveWhisperBin()
+
+  try {
+    const { stdout, stderr } = await run(bin, ['-h'])
+    status.binAvailable = true
+    const combined = `${stdout}\n${stderr}`
+    const versionMatch = combined.match(/whisper\.cpp[^\n]*?(?:version|build)[:\s]+([^\s,)]+)/i)
+    if (versionMatch) status.binVersion = versionMatch[1]
+    try {
+      const { stdout: whichOut } = await run(process.platform === 'win32' ? 'where' : 'which', [bin])
+      status.binPath = whichOut.trim().split('\n')[0] || bin
+    } catch {
+      status.binPath = bin
+    }
+  } catch (err) {
+    if (isMissingBinaryError(err)) {
+      status.binError = `Binário "${bin}" não encontrado no PATH.`
+    } else {
+      status.binError = (err as Error).message
+    }
   }
-  const { summary, actionItems } = await summarizeTranscript(transcript)
-  return { transcript, summary, actionItems }
+
+  const modelPath = getSettingSync('whisperModel')
+  if (modelPath && (await fileExists(modelPath))) {
+    const s = await stat(modelPath)
+    const info = WHISPER_MODELS.find((m) => modelPath.endsWith(m.filename))
+    status.model = {
+      id: info?.id,
+      label: info?.label,
+      filename: info?.filename ?? modelPath.split('/').pop() ?? modelPath,
+      path: modelPath,
+      sizeBytes: s.size
+    }
+  }
+
+  return status
+}
+
+export async function assertWhisperReady(): Promise<void> {
+  const status = await getWhisperStatus()
+  if (!status.binAvailable) {
+    throw new Error(
+      `${WHISPER_NOT_READY_MARKER} ${status.binError ?? 'whisper-cli indisponível.'} Abra Configurações.`
+    )
+  }
+  if (!status.model) {
+    throw new Error(
+      `${WHISPER_NOT_READY_MARKER} Nenhum modelo do Whisper selecionado. Abra Configurações e baixe um modelo.`
+    )
+  }
+}
+
+export async function transcribeAndSummarize(
+  audio: Buffer,
+  onStage?: StageReporter,
+  signal?: AbortSignal
+): Promise<ProcessAudioResult> {
+  await assertWhisperReady()
+
+  const dir = await mkdtemp(join(tmpdir(), 'meetnotes-'))
+  let wavPath: string
+  const stageErr = (stage: StageName, err: unknown): void => {
+    const msg = isAbortError(err) ? 'Cancelado' : (err as Error).message
+    onStage?.(stage, 'failed', msg)
+  }
+  try {
+    onStage?.('converting', 'active')
+    try {
+      wavPath = await convertToWav(audio, dir, signal)
+      onStage?.('converting', 'done')
+    } catch (err) {
+      stageErr('converting', err)
+      throw err
+    }
+
+    onStage?.('transcribing', 'active')
+    let transcript: string
+    try {
+      transcript = await runWhisperOnWav(wavPath, dir, signal)
+      onStage?.('transcribing', 'done')
+    } catch (err) {
+      stageErr('transcribing', err)
+      throw err
+    }
+
+    if (!transcript) {
+      const msg = 'Nenhuma fala foi reconhecida pelo Whisper. Verifique o áudio e o modelo selecionado.'
+      onStage?.('transcribing', 'failed', msg)
+      throw new Error(msg)
+    }
+
+    onStage?.('summarizing', 'active')
+    try {
+      const { summary, actionItems } = await summarizeTranscript(transcript, signal)
+      onStage?.('summarizing', 'done')
+      return { transcript, summary, actionItems }
+    } catch (err) {
+      stageErr('summarizing', err)
+      throw err
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined)
+  }
 }

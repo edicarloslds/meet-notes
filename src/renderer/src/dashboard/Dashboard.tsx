@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState, type ReactElement } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import ReactMarkdown from 'react-markdown'
-import type { Meeting } from '../../../shared/types'
+import { WHISPER_NOT_READY_MARKER, type Meeting, type WhisperStatus } from '../../../shared/types'
+import { SettingsPanel } from './SettingsPanel'
+import { ProcessingTimeline, type TimelineState } from './ProcessingTimeline'
 
 export function Dashboard(): ReactElement {
   const [meetings, setMeetings] = useState<Meeting[]>([])
@@ -14,6 +16,11 @@ export function Dashboard(): ReactElement {
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
   const [tab, setTab] = useState<'summary' | 'transcript' | 'actions'>('summary')
   const [copied, setCopied] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
+  const [whisperStatus, setWhisperStatus] = useState<WhisperStatus | null>(null)
+  const [progressByMeeting, setProgressByMeeting] = useState<Record<string, TimelineState>>({})
+  const [tickNow, setTickNow] = useState(() => Date.now())
+  const tickIntervalRef = useRef<number | null>(null)
 
   const refresh = async (): Promise<void> => {
     const list = await window.meetnotes.listMeetings()
@@ -21,8 +28,18 @@ export function Dashboard(): ReactElement {
     setSelectedId((cur) => cur ?? (list[0]?.id ?? null))
   }
 
+  const refreshWhisperStatus = async (): Promise<void> => {
+    try {
+      const s = await window.meetnotes.getWhisperStatus()
+      setWhisperStatus(s)
+    } catch {
+      /* ignore */
+    }
+  }
+
   useEffect(() => {
     void refresh()
+    void refreshWhisperStatus()
     const handleOnline = async (): Promise<void> => {
       const res = await window.meetnotes.syncPending()
       if (res.synced > 0) {
@@ -37,6 +54,25 @@ export function Dashboard(): ReactElement {
     window.addEventListener('scroll', closePending, true)
     const offEnded = window.meetnotes.onMeetingEnded(() => void refresh())
     const offDetected = window.meetnotes.onMeetingDetected(() => void refresh())
+    const offProgress = window.meetnotes.onMeetingProgress((p) => {
+      setProgressByMeeting((prev) => {
+        const prior = prev[p.meetingId] ?? {}
+        const existing = prior[p.stage]
+        const next: TimelineState = {
+          ...prior,
+          [p.stage]: {
+            status: p.status,
+            startedAt:
+              p.status === 'active'
+                ? p.at
+                : existing?.startedAt ?? (p.status === 'done' ? p.at : p.at),
+            finishedAt: p.status === 'active' ? undefined : p.at,
+            error: p.error
+          }
+        }
+        return { ...prev, [p.meetingId]: next }
+      })
+    })
     const interval = window.setInterval(() => void refresh(), 5000)
     return () => {
       window.removeEventListener('online', handleOnline)
@@ -44,9 +80,42 @@ export function Dashboard(): ReactElement {
       window.removeEventListener('scroll', closePending, true)
       offEnded()
       offDetected()
+      offProgress()
       window.clearInterval(interval)
     }
   }, [])
+
+  useEffect(() => {
+    const hasActive = Object.values(progressByMeeting).some((s) =>
+      Object.values(s).some((stage) => stage?.status === 'active')
+    )
+    if (hasActive && tickIntervalRef.current === null) {
+      tickIntervalRef.current = window.setInterval(() => setTickNow(Date.now()), 500)
+    } else if (!hasActive && tickIntervalRef.current !== null) {
+      window.clearInterval(tickIntervalRef.current)
+      tickIntervalRef.current = null
+    }
+    return () => {
+      if (tickIntervalRef.current !== null) {
+        window.clearInterval(tickIntervalRef.current)
+        tickIntervalRef.current = null
+      }
+    }
+  }, [progressByMeeting])
+
+  useEffect(() => {
+    setProgressByMeeting((prev) => {
+      const updated = { ...prev }
+      let changed = false
+      for (const m of meetings) {
+        if (m.status === 'ready' && updated[m.id]) {
+          delete updated[m.id]
+          changed = true
+        }
+      }
+      return changed ? updated : prev
+    })
+  }, [meetings])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -118,7 +187,22 @@ export function Dashboard(): ReactElement {
           className="px-4 pb-4 pt-10 border-b border-slate-200"
           style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
         >
-          <h1 className="text-lg font-semibold">MeetNotes</h1>
+          <div className="flex items-center justify-between">
+            <h1 className="text-lg font-semibold">MeetNotes</h1>
+            <button
+              type="button"
+              aria-label="Configurações"
+              title="Configurações"
+              onClick={() => setShowSettings(true)}
+              className="p-1.5 rounded-md text-slate-500 hover:text-slate-800 hover:bg-slate-200/70"
+              style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+              </svg>
+            </button>
+          </div>
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -176,6 +260,21 @@ export function Dashboard(): ReactElement {
                       </span>
                     )}
 
+                    {actionsDisabled && (
+                      <button
+                        type="button"
+                        aria-label="Cancelar processamento"
+                        title="Cancelar processamento"
+                        onClick={(e) => { e.stopPropagation(); void window.meetnotes.cancelProcessing(m.id) }}
+                        className="p-1 rounded-md text-slate-500 hover:text-red-600 hover:bg-red-50"
+                      >
+                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="12" cy="12" r="9" />
+                          <path d="M15 9l-6 6" />
+                          <path d="M9 9l6 6" />
+                        </svg>
+                      </button>
+                    )}
                     {!actionsDisabled && (
                       isPendingDelete ? (
                         <button
@@ -227,7 +326,26 @@ export function Dashboard(): ReactElement {
       </aside>
 
       <main className="flex-1 overflow-y-auto">
-        {selected ? (
+        {!showSettings && whisperStatus && (!whisperStatus.binAvailable || !whisperStatus.model) && (
+          <div className="bg-amber-50 border-b border-amber-200 px-6 py-3 flex items-center justify-between gap-4">
+            <div className="text-sm text-amber-900">
+              <span className="font-medium">Whisper não está pronto.</span>{' '}
+              {!whisperStatus.binAvailable
+                ? 'Instale o whisper-cli (ex.: brew install whisper-cpp).'
+                : 'Nenhum modelo selecionado.'}
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowSettings(true)}
+              className="shrink-0 text-xs font-medium bg-amber-600 hover:bg-amber-500 text-white rounded-md px-3 py-1.5"
+            >
+              Abrir Configurações
+            </button>
+          </div>
+        )}
+        {showSettings ? (
+          <SettingsPanel onClose={() => { setShowSettings(false); void refreshWhisperStatus() }} />
+        ) : selected ? (
           <div className="max-w-3xl mx-auto px-10 py-10">
             {!isEditing && (
               <>
@@ -291,25 +409,46 @@ export function Dashboard(): ReactElement {
             )}
 
             {selectedStatus === 'processing' && !isEditing && (
-              <div className="flex items-center gap-4 py-10">
-                <div className="w-6 h-6 border-2 border-sky-200 border-t-sky-500 rounded-full animate-spin" />
-                <div>
-                  <div className="text-sm font-medium text-slate-700">Processando transcrição…</div>
-                  <div className="text-xs text-slate-500 mt-0.5">
-                    O resumo ficará disponível assim que a IA terminar.
-                  </div>
+              <div className="py-6">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="w-5 h-5 border-2 border-sky-200 border-t-sky-500 rounded-full animate-spin" />
+                  <div className="text-sm font-medium text-slate-700">Processando reunião…</div>
                 </div>
+                <ProcessingTimeline
+                  state={progressByMeeting[selected.id] ?? {}}
+                  now={tickNow}
+                />
               </div>
             )}
 
-            {selectedStatus === 'failed' && !isEditing && (
-              <div className="py-10">
-                <div className="text-sm font-medium text-red-700">Falha no processamento</div>
-                <div className="text-xs text-slate-500 mt-1">
-                  Não foi possível transcrever esta gravação. Você pode excluí-la pela lista.
+            {selectedStatus === 'failed' && !isEditing && (() => {
+              const errors = Object.values(progressByMeeting[selected.id] ?? {})
+                .map((s) => s?.error)
+                .filter(Boolean) as string[]
+              const notReadyErr = errors.find((e) => e.includes(WHISPER_NOT_READY_MARKER))
+              const cleanErr = notReadyErr?.replace(WHISPER_NOT_READY_MARKER, '').trim()
+              return (
+                <div className="py-10">
+                  <div className="text-sm font-medium text-red-700">Falha no processamento</div>
+                  {notReadyErr ? (
+                    <>
+                      <div className="text-xs text-slate-600 mt-1">{cleanErr}</div>
+                      <button
+                        type="button"
+                        onClick={() => setShowSettings(true)}
+                        className="mt-4 text-sm font-medium bg-sky-600 hover:bg-sky-500 text-white rounded-md px-4 py-2"
+                      >
+                        Abrir Configurações
+                      </button>
+                    </>
+                  ) : (
+                    <div className="text-xs text-slate-500 mt-1">
+                      {errors[errors.length - 1] ?? 'Não foi possível transcrever esta gravação. Você pode excluí-la pela lista.'}
+                    </div>
+                  )}
                 </div>
-              </div>
-            )}
+              )
+            })()}
 
             {selectedStatus === 'ready' && !isEditing && tab === 'summary' && regenerating && (
               <div className="flex items-center gap-4 py-10">

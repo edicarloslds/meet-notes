@@ -1,5 +1,17 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { ActionItem, IpcChannels, Meeting, MeetingDetectedPayload, ProcessAudioResult } from '../shared/types'
+import {
+  ActionItem,
+  AppSettings,
+  IpcChannels,
+  Meeting,
+  MeetingDetectedPayload,
+  MeetingProgressEvent,
+  ModelDownloadProgress,
+  ProcessAudioResult,
+  WhisperModelInfo,
+  WhisperModelStatus,
+  WhisperStatus
+} from '../shared/types'
 
 const api = {
   onMeetingDetected: (cb: (p: MeetingDetectedPayload) => void): (() => void) => {
@@ -7,6 +19,13 @@ const api = {
     ipcRenderer.on(IpcChannels.MeetingDetected, listener)
     return (): void => {
       ipcRenderer.removeListener(IpcChannels.MeetingDetected, listener)
+    }
+  },
+  onMeetingProgress: (cb: (p: MeetingProgressEvent) => void): (() => void) => {
+    const listener = (_: unknown, payload: MeetingProgressEvent): void => cb(payload)
+    ipcRenderer.on(IpcChannels.MeetingProgress, listener)
+    return (): void => {
+      ipcRenderer.removeListener(IpcChannels.MeetingProgress, listener)
     }
   },
   onMeetingEnded: (cb: () => void): (() => void) => {
@@ -33,8 +52,32 @@ const api = {
     ipcRenderer.invoke(IpcChannels.SimulateMeeting, title),
   deleteMeeting: (id: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannels.DeleteMeeting, id),
+  cancelProcessing: (id: string): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.CancelProcessing, id),
   regenerateSummary: (transcript: string): Promise<{ summary: string; actionItems: ActionItem[] }> =>
-    ipcRenderer.invoke(IpcChannels.RegenerateSummary, transcript)
+    ipcRenderer.invoke(IpcChannels.RegenerateSummary, transcript),
+  getSettings: (): Promise<AppSettings> => ipcRenderer.invoke(IpcChannels.GetSettings),
+  saveSettings: (settings: AppSettings): Promise<AppSettings> =>
+    ipcRenderer.invoke(IpcChannels.SaveSettings, settings),
+  listWhisperModels: (): Promise<WhisperModelInfo[]> =>
+    ipcRenderer.invoke(IpcChannels.ListWhisperModels),
+  getModelStatus: (): Promise<WhisperModelStatus[]> =>
+    ipcRenderer.invoke(IpcChannels.GetModelStatus),
+  downloadModel: (id: string): Promise<string> =>
+    ipcRenderer.invoke(IpcChannels.DownloadModel, id),
+  cancelModelDownload: (id: string): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.CancelModelDownload, id),
+  deleteModel: (id: string): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.DeleteModel, id),
+  getWhisperStatus: (): Promise<WhisperStatus> =>
+    ipcRenderer.invoke(IpcChannels.GetWhisperStatus),
+  onModelProgress: (cb: (p: ModelDownloadProgress) => void): (() => void) => {
+    const listener = (_: unknown, payload: ModelDownloadProgress): void => cb(payload)
+    ipcRenderer.on(IpcChannels.ModelProgress, listener)
+    return (): void => {
+      ipcRenderer.removeListener(IpcChannels.ModelProgress, listener)
+    }
+  }
 }
 
 contextBridge.exposeInMainWorld('meetnotes', api)

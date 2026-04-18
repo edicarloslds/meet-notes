@@ -20,14 +20,30 @@
     "directories": {
       "buildResources": "resources"
     },
-    "files": ["out/**/*", "package.json"],
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/ffmpeg",
+      "node_modules/ffmpeg-static/ffmpeg.exe"
+    ],
     "extraResources": [
-      { "from": "resources/trayTemplate.png", "to": "trayTemplate.png" },
-      { "from": "resources/trayTemplate@2x.png", "to": "trayTemplate@2x.png" }
+      {
+        "from": "resources/trayTemplate.png",
+        "to": "trayTemplate.png"
+      },
+      {
+        "from": "resources/trayTemplate@2x.png",
+        "to": "trayTemplate@2x.png"
+      }
     ],
     "mac": {
       "icon": "resources/icon.icns",
-      "category": "public.app-category.productivity"
+      "category": "public.app-category.productivity",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "O MeetNotes captura áudio para gerar transcrições e resumos de reuniões."
+      }
     },
     "win": {
       "icon": "resources/icon.ico"
@@ -36,6 +52,7 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.103.3",
     "electron-store": "^11.0.2",
+    "ffmpeg-static": "^5.3.0",
     "get-windows": "^9.3.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",

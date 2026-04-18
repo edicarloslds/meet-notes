@@ -1,9 +1,33 @@
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, shell, Tray } from 'electron'
 import { join } from 'path'
-import { IpcChannels, Meeting, MeetingDetectedPayload, ProcessAudioResult } from '../shared/types'
+import {
+  AppSettings,
+  IpcChannels,
+  Meeting,
+  MeetingDetectedPayload,
+  MeetingProgressEvent,
+  ProcessAudioResult,
+  StageName,
+  StageStatus
+} from '../shared/types'
 import { startMeetingWatcher, stopMeetingWatcher } from './meetingWatcher'
-import { transcribeAndSummarize, summarizeTranscript } from './aiService'
-import { saveMeeting, listMeetings, syncPendingMeetings, deleteMeeting } from './storageService'
+import { getWhisperStatus, isAbortError, transcribeAndSummarize, summarizeTranscript } from './aiService'
+import {
+  cleanupStaleProcessing,
+  deleteMeeting,
+  listMeetings,
+  resetSupabaseClient,
+  saveMeeting,
+  syncPendingMeetings
+} from './storageService'
+import { getSettings, primeSettingsCache, saveSettings } from './settingsService'
+import {
+  cancelDownload,
+  deleteModel,
+  downloadModel,
+  listModelStatus,
+  WHISPER_MODELS
+} from './modelDownloader'
 
 let dashboardWindow: BrowserWindow | null = null
 let pillWindow: BrowserWindow | null = null
@@ -111,6 +135,21 @@ function handleDetected(payload: MeetingDetectedPayload): void {
   }
 }
 
+const processingJobs = new Map<string, AbortController>()
+
+function emitProgress(meetingId: string, stage: StageName, status: StageStatus, error?: string): void {
+  const payload: MeetingProgressEvent = {
+    meetingId,
+    stage,
+    status,
+    at: Date.now(),
+    ...(error ? { error } : {})
+  }
+  if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+    dashboardWindow.webContents.send(IpcChannels.MeetingProgress, payload)
+  }
+}
+
 function handleEnded(): void {
   if (dashboardWindow && !dashboardWindow.isDestroyed()) {
     dashboardWindow.webContents.send(IpcChannels.MeetingEnded)
@@ -143,10 +182,17 @@ function createTray(): void {
 }
 
 app.whenReady().then(async () => {
+  await primeSettingsCache()
   createTray()
   createDashboardWindow()
 
   startMeetingWatcher({ onDetected: handleDetected, onEnded: handleEnded })
+
+  cleanupStaleProcessing()
+    .then((ids) => {
+      if (ids.length > 0) console.log(`Cleaned ${ids.length} stale processing meeting(s)`)
+    })
+    .catch((err) => console.warn('Cleanup on boot failed:', err))
 
   syncPendingMeetings().catch((err) => console.warn('Sync on boot failed:', err))
 
@@ -167,8 +213,16 @@ app.whenReady().then(async () => {
     (_e, placeholder: Meeting, audioBuffer: ArrayBuffer) => {
       void (async (): Promise<void> => {
         const startedAt = Date.now()
+        const meetingId = placeholder.id
+        const controller = new AbortController()
+        processingJobs.set(meetingId, controller)
         try {
-          const result = await transcribeAndSummarize(Buffer.from(audioBuffer))
+          const result = await transcribeAndSummarize(
+            Buffer.from(audioBuffer),
+            (stage, status, error) => emitProgress(meetingId, stage, status, error),
+            controller.signal
+          )
+          emitProgress(meetingId, 'saving', 'active')
           await saveMeeting({
             ...placeholder,
             raw_transcript: result.transcript,
@@ -177,9 +231,17 @@ app.whenReady().then(async () => {
             status: 'ready',
             processing_ms: Date.now() - startedAt
           })
+          emitProgress(meetingId, 'saving', 'done')
         } catch (err) {
-          console.warn('process-and-save failed:', err)
-          await saveMeeting({ ...placeholder, status: 'failed' }).catch(() => undefined)
+          if (isAbortError(err) || controller.signal.aborted) {
+            await deleteMeeting(meetingId).catch(() => undefined)
+          } else {
+            console.warn('process-and-save failed:', err)
+            emitProgress(meetingId, 'saving', 'failed', (err as Error).message)
+            await saveMeeting({ ...placeholder, status: 'failed' }).catch(() => undefined)
+          }
+        } finally {
+          processingJobs.delete(meetingId)
         }
         if (dashboardWindow && !dashboardWindow.isDestroyed()) {
           dashboardWindow.webContents.send(IpcChannels.MeetingEnded)
@@ -187,6 +249,18 @@ app.whenReady().then(async () => {
       })()
     }
   )
+
+  ipcMain.handle(IpcChannels.CancelProcessing, async (_e, id: string) => {
+    const controller = processingJobs.get(id)
+    if (controller) {
+      controller.abort()
+      return
+    }
+    await deleteMeeting(id).catch(() => undefined)
+    if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+      dashboardWindow.webContents.send(IpcChannels.MeetingEnded)
+    }
+  })
 
   ipcMain.handle(IpcChannels.ListMeetings, async () => listMeetings())
   ipcMain.handle(IpcChannels.SyncPending, async () => syncPendingMeetings())
@@ -197,6 +271,33 @@ app.whenReady().then(async () => {
   ipcMain.handle(IpcChannels.RegenerateSummary, async (_e, transcript: string) => {
     return summarizeTranscript(transcript)
   })
+  ipcMain.handle(IpcChannels.GetSettings, async () => getSettings())
+  ipcMain.handle(IpcChannels.SaveSettings, async (_e, next: AppSettings) => {
+    const saved = await saveSettings(next)
+    resetSupabaseClient()
+    return saved
+  })
+  ipcMain.handle(IpcChannels.ListWhisperModels, async () => WHISPER_MODELS)
+  ipcMain.handle(IpcChannels.GetModelStatus, async () => listModelStatus())
+  ipcMain.handle(IpcChannels.DownloadModel, async (_e, id: string) => {
+    const path = await downloadModel(id)
+    const current = await getSettings()
+    if (!current.whisperModel) {
+      await saveSettings({ ...current, whisperModel: path })
+    }
+    return path
+  })
+  ipcMain.handle(IpcChannels.CancelModelDownload, async (_e, id: string) => {
+    cancelDownload(id)
+  })
+  ipcMain.handle(IpcChannels.DeleteModel, async (_e, id: string) => {
+    await deleteModel(id)
+    const current = await getSettings()
+    if (current.whisperModel && current.whisperModel.endsWith(`ggml-${id === 'large-v3' ? 'large-v3' : id}.bin`)) {
+      await saveSettings({ ...current, whisperModel: undefined })
+    }
+  })
+  ipcMain.handle(IpcChannels.GetWhisperStatus, async () => getWhisperStatus())
   ipcMain.handle(IpcChannels.SimulateMeeting, async (_e, title?: string) => {
     handleDetected({
       title: title?.trim() || 'Reunião de teste',

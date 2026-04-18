@@ -18,12 +18,11 @@ Requer **pnpm ≥ 10** e Node ≥ 20.
 Dependências externas (macOS):
 
 ```bash
-brew install whisper-cpp ffmpeg ollama
-# baixe um modelo whisper.cpp, ex.:
-curl -L -o ~/models/ggml-large-v3-turbo.bin \
-  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
+brew install whisper-cpp ollama
 ollama pull gemma4:e2b
 ```
+
+O `ffmpeg` já vem embutido (`ffmpeg-static`). O modelo do whisper.cpp é baixado direto pelo app em **Configurações → Modelos do Whisper**.
 
 ```bash
 cp .env.example .env       # preencha as variáveis
@@ -46,13 +45,9 @@ pnpm dev
 ```
 MAIN_VITE_SUPABASE_URL=https://xxx.supabase.co
 MAIN_VITE_SUPABASE_ANON_KEY=eyJ...
-MAIN_VITE_OLLAMA_HOST=http://127.0.0.1:11434
-MAIN_VITE_OLLAMA_MODEL=gemma4:e2b
-MAIN_VITE_WHISPER_BIN=whisper-cli
-MAIN_VITE_WHISPER_MODEL=/Users/you/models/ggml-large-v3-turbo.bin
-MAIN_VITE_WHISPER_LANGUAGE=pt
-MAIN_VITE_FFMPEG_BIN=ffmpeg
 ```
+
+As demais opções (host/modelo do Ollama, idioma do Whisper, etc.) são configuradas em **Configurações** dentro do app.
 
 O prefixo `MAIN_VITE_` é injetado pelo electron-vite no processo **Main** (nunca exposto no renderer).
 
