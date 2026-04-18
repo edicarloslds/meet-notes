@@ -22,7 +22,7 @@ brew install whisper-cpp ffmpeg ollama
 # baixe um modelo whisper.cpp, ex.:
 curl -L -o ~/models/ggml-large-v3-turbo.bin \
   https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
-ollama pull gemma4
+ollama pull gemma4:e2b
 ```
 
 ```bash
@@ -47,7 +47,7 @@ pnpm dev
 MAIN_VITE_SUPABASE_URL=https://xxx.supabase.co
 MAIN_VITE_SUPABASE_ANON_KEY=eyJ...
 MAIN_VITE_OLLAMA_HOST=http://127.0.0.1:11434
-MAIN_VITE_OLLAMA_MODEL=gemma4
+MAIN_VITE_OLLAMA_MODEL=gemma4:e2b
 MAIN_VITE_WHISPER_BIN=whisper-cli
 MAIN_VITE_WHISPER_MODEL=/Users/you/models/ggml-large-v3-turbo.bin
 MAIN_VITE_WHISPER_LANGUAGE=pt

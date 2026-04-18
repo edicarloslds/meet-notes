@@ -5,7 +5,7 @@ import { join } from 'path'
 import { ActionItem, ProcessAudioResult } from '../shared/types'
 
 const OLLAMA_HOST = import.meta.env.MAIN_VITE_OLLAMA_HOST || 'http://127.0.0.1:11434'
-const OLLAMA_MODEL = import.meta.env.MAIN_VITE_OLLAMA_MODEL || 'gemma4'
+const OLLAMA_MODEL = import.meta.env.MAIN_VITE_OLLAMA_MODEL || 'gemma4:e2b'
 const WHISPER_BIN = import.meta.env.MAIN_VITE_WHISPER_BIN || 'whisper-cli'
 const WHISPER_MODEL = import.meta.env.MAIN_VITE_WHISPER_MODEL
 const WHISPER_LANGUAGE = import.meta.env.MAIN_VITE_WHISPER_LANGUAGE || 'pt'
