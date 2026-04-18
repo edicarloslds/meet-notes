@@ -6,6 +6,7 @@ export function Pill(): ReactElement {
   const [state, setState] = useState<PillState>('idle')
   const [title, setTitle] = useState<string>('Reunião detectada')
   const [elapsed, setElapsed] = useState(0)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const tickRef = useRef<number | null>(null)
   const { start, stop, isRecording } = useAudioRecorder()
 
@@ -33,11 +34,15 @@ export function Pill(): ReactElement {
   }, [state])
 
   const handleStart = async (): Promise<void> => {
+    setErrorMsg(null)
     try {
       await start()
       setState('recording')
     } catch (err) {
       console.error('Failed to start recording:', err)
+      const msg = err instanceof Error ? err.message : String(err)
+      setErrorMsg(/permission|denied|notallowed/i.test(msg) ? 'Permissão negada' : 'Falha ao gravar')
+      setState('idle')
     }
   }
 
@@ -95,7 +100,9 @@ export function Pill(): ReactElement {
               <span className="text-xs text-white/70 truncate">Salvando…</span>
             )}
             {state === 'idle' && (
-              <span className="text-xs text-white/70 truncate">{title}</span>
+              <span className={`text-xs truncate ${errorMsg ? 'text-red-300' : 'text-white/70'}`}>
+                {errorMsg ?? title}
+              </span>
             )}
           </div>
         </div>
@@ -117,6 +124,20 @@ export function Pill(): ReactElement {
         )}
         {(state === 'transcribing' || state === 'saving') && (
           <div className="shrink-0 w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+        )}
+        {(state === 'idle' || state === 'recording') && (
+          <button
+            onClick={async () => {
+              if (isRecording) {
+                try { await stop() } catch { /* ignore */ }
+              }
+              window.meetnotes.closePill()
+            }}
+            title="Fechar"
+            className="shrink-0 w-6 h-6 flex items-center justify-center rounded-full text-white/60 hover:text-white hover:bg-white/10 transition"
+          >
+            ×
+          </button>
         )}
       </div>
     </div>

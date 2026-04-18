@@ -1,9 +1,9 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, screen, shell } from 'electron'
 import { join } from 'path'
-import { IpcChannels, Meeting, ProcessAudioResult } from '../shared/types'
+import { IpcChannels, Meeting, MeetingDetectedPayload, ProcessAudioResult } from '../shared/types'
 import { startMeetingWatcher, stopMeetingWatcher } from './meetingWatcher'
-import { transcribeAndSummarize } from './aiService'
-import { saveMeeting, listMeetings, syncPendingMeetings } from './storageService'
+import { transcribeAndSummarize, summarizeTranscript } from './aiService'
+import { saveMeeting, listMeetings, syncPendingMeetings, deleteMeeting } from './storageService'
 
 let dashboardWindow: BrowserWindow | null = null
 let pillWindow: BrowserWindow | null = null
@@ -38,11 +38,14 @@ function createDashboardWindow(): void {
 function createPillWindow(): void {
   if (pillWindow && !pillWindow.isDestroyed()) return
 
+  const pillWidth = 260
+  const pillHeight = 64
+  const { workArea } = screen.getPrimaryDisplay()
   pillWindow = new BrowserWindow({
-    width: 260,
-    height: 64,
-    x: 40,
-    y: 40,
+    width: pillWidth,
+    height: pillHeight,
+    x: workArea.x + Math.round((workArea.width - pillWidth) / 2),
+    y: workArea.y + workArea.height - pillHeight - 32,
     frame: false,
     transparent: true,
     resizable: false,
@@ -86,15 +89,15 @@ function hidePill(): void {
 app.whenReady().then(async () => {
   createDashboardWindow()
 
-  startMeetingWatcher({
-    onDetected: (payload) => {
-      showPill(payload.title)
-      dashboardWindow?.webContents.send(IpcChannels.MeetingDetected, payload)
-    },
-    onEnded: () => {
-      dashboardWindow?.webContents.send(IpcChannels.MeetingEnded)
-    }
-  })
+  const handleDetected = (payload: MeetingDetectedPayload): void => {
+    showPill(payload.title)
+    dashboardWindow?.webContents.send(IpcChannels.MeetingDetected, payload)
+  }
+  const handleEnded = (): void => {
+    dashboardWindow?.webContents.send(IpcChannels.MeetingEnded)
+  }
+
+  startMeetingWatcher({ onDetected: handleDetected, onEnded: handleEnded })
 
   // Attempt to sync anything offline.
   syncPendingMeetings().catch((err) => console.warn('Sync on boot failed:', err))
@@ -104,7 +107,9 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle(IpcChannels.SaveMeeting, async (_e, meeting: Meeting) => {
-    return saveMeeting(meeting)
+    const saved = await saveMeeting(meeting)
+    dashboardWindow?.webContents.send(IpcChannels.MeetingEnded)
+    return saved
   })
 
   ipcMain.handle(IpcChannels.ListMeetings, async () => {
@@ -117,6 +122,22 @@ app.whenReady().then(async () => {
 
   ipcMain.on(IpcChannels.PillStop, () => {
     hidePill()
+  })
+
+  ipcMain.handle(IpcChannels.DeleteMeeting, async (_e, id: string) => {
+    await deleteMeeting(id)
+  })
+
+  ipcMain.handle(IpcChannels.RegenerateSummary, async (_e, transcript: string) => {
+    return summarizeTranscript(transcript)
+  })
+
+  ipcMain.handle(IpcChannels.SimulateMeeting, async (_e, title?: string) => {
+    handleDetected({
+      title: title?.trim() || 'Reunião de teste',
+      appName: 'MeetNotes (simulado)',
+      detectedAt: new Date().toISOString()
+    })
   })
 
   app.on('activate', () => {

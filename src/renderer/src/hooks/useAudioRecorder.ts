@@ -12,17 +12,7 @@ export function useAudioRecorder(): {
 
   const start = async (): Promise<void> => {
     chunksRef.current = []
-    // Desktop audio via Electron's desktopCapturer loopback. Falls back to mic.
-    let stream: MediaStream
-    try {
-      const desktopConstraints = {
-        audio: { mandatory: { chromeMediaSource: 'desktop' } },
-        video: false
-      } as unknown as MediaStreamConstraints
-      stream = await navigator.mediaDevices.getUserMedia(desktopConstraints)
-    } catch {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-    }
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
     streamRef.current = stream
     const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
       ? 'audio/webm;codecs=opus'

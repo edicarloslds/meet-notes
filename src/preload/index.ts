@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { IpcChannels, Meeting, MeetingDetectedPayload, ProcessAudioResult } from '../shared/types'
+import { ActionItem, IpcChannels, Meeting, MeetingDetectedPayload, ProcessAudioResult } from '../shared/types'
 
 const api = {
   onMeetingDetected: (cb: (p: MeetingDetectedPayload) => void): (() => void) => {
@@ -25,7 +25,13 @@ const api = {
     ipcRenderer.invoke(IpcChannels.SyncPending),
   closePill: (): void => {
     ipcRenderer.send(IpcChannels.PillStop)
-  }
+  },
+  simulateMeeting: (title?: string): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.SimulateMeeting, title),
+  deleteMeeting: (id: string): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.DeleteMeeting, id),
+  regenerateSummary: (transcript: string): Promise<{ summary: string; actionItems: ActionItem[] }> =>
+    ipcRenderer.invoke(IpcChannels.RegenerateSummary, transcript)
 }
 
 contextBridge.exposeInMainWorld('meetnotes', api)

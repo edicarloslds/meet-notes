@@ -38,5 +38,8 @@ export const IpcChannels = {
   ProcessAudio: 'audio:process',
   SaveMeeting: 'meeting:save',
   ListMeetings: 'meeting:list',
-  SyncPending: 'meeting:sync-pending'
+  SyncPending: 'meeting:sync-pending',
+  SimulateMeeting: 'meeting:simulate',
+  DeleteMeeting: 'meeting:delete',
+  RegenerateSummary: 'meeting:regenerate-summary'
 } as const

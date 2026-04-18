@@ -9,7 +9,8 @@
       "Bash(pnpm typecheck *)",
       "Bash(pnpm build *)",
       "Bash(timeout 25 pnpm dev)",
-      "Bash(node install.js)"
+      "Bash(node install.js)",
+      "Bash(pnpm exec *)"
     ]
   }
 }

@@ -6,7 +6,7 @@ let client: OpenAI | null = null
 
 function getClient(): OpenAI {
   if (client) return client
-  const apiKey = process.env.MAIN_VITE_OPENAI_API_KEY
+  const apiKey = import.meta.env.MAIN_VITE_OPENAI_API_KEY
   if (!apiKey) throw new Error('MAIN_VITE_OPENAI_API_KEY is not configured')
   client = new OpenAI({ apiKey })
   return client
@@ -19,20 +19,11 @@ const SUMMARY_PROMPT = `You are a meeting-notes assistant. Given a raw meeting t
 Respond strictly as JSON:
 {"summary": "<markdown>", "action_items": [...]}`
 
-export async function transcribeAndSummarize(audio: Buffer): Promise<ProcessAudioResult> {
+export async function summarizeTranscript(
+  transcript: string
+): Promise<{ summary: string; actionItems: ActionItem[] }> {
+  if (!transcript.trim()) return { summary: '', actionItems: [] }
   const openai = getClient()
-
-  const file = await toFile(audio, 'meeting.webm', { type: 'audio/webm' })
-  const transcription = await openai.audio.transcriptions.create({
-    file,
-    model: 'whisper-1'
-  })
-  const transcript = transcription.text ?? ''
-
-  if (!transcript.trim()) {
-    return { transcript: '', summary: '_No speech detected._', actionItems: [] }
-  }
-
   const completion = await openai.chat.completions.create({
     model: 'gpt-4o',
     response_format: { type: 'json_object' },
@@ -41,18 +32,26 @@ export async function transcribeAndSummarize(audio: Buffer): Promise<ProcessAudi
       { role: 'user', content: transcript }
     ]
   })
-
   const raw = completion.choices[0]?.message?.content ?? '{}'
-  let summary = ''
-  let actionItems: ActionItem[] = []
   try {
     const parsed = JSON.parse(raw)
-    summary = typeof parsed.summary === 'string' ? parsed.summary : ''
-    if (Array.isArray(parsed.action_items)) actionItems = parsed.action_items
+    const summary = typeof parsed.summary === 'string' ? parsed.summary : ''
+    const actionItems: ActionItem[] = Array.isArray(parsed.action_items) ? parsed.action_items : []
+    return { summary, actionItems }
   } catch (err) {
     console.warn('Failed to parse summary JSON:', err)
-    summary = raw
+    return { summary: raw, actionItems: [] }
   }
+}
 
+export async function transcribeAndSummarize(audio: Buffer): Promise<ProcessAudioResult> {
+  const openai = getClient()
+  const file = await toFile(audio, 'meeting.webm', { type: 'audio/webm' })
+  const transcription = await openai.audio.transcriptions.create({ file, model: 'whisper-1' })
+  const transcript = transcription.text ?? ''
+  if (!transcript.trim()) {
+    return { transcript: '', summary: '', actionItems: [] }
+  }
+  const { summary, actionItems } = await summarizeTranscript(transcript)
   return { transcript, summary, actionItems }
 }

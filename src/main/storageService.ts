@@ -29,8 +29,8 @@ let supabase: SupabaseClient | null = null
 
 function getSupabase(): SupabaseClient | null {
   if (supabase) return supabase
-  const url = process.env.MAIN_VITE_SUPABASE_URL
-  const key = process.env.MAIN_VITE_SUPABASE_ANON_KEY
+  const url = import.meta.env.MAIN_VITE_SUPABASE_URL
+  const key = import.meta.env.MAIN_VITE_SUPABASE_ANON_KEY
   if (!url || !key) return null
   supabase = createClient(url, key)
   return supabase
@@ -94,6 +94,16 @@ export async function saveMeeting(meeting: Meeting): Promise<Meeting> {
   }
 
   return record
+}
+
+export async function deleteMeeting(id: string): Promise<void> {
+  const store = await getStore()
+  store.set('meetings', store.get('meetings').filter((m) => m.id !== id))
+  store.set('pending', store.get('pending').filter((m) => m.id !== id))
+  const client = getSupabase()
+  if (!client) return
+  const { error } = await client.from('meetings').delete().eq('id', id)
+  if (error) console.warn('Supabase delete error:', error.message)
 }
 
 export async function listMeetings(): Promise<Meeting[]> {
