@@ -9,6 +9,7 @@ export interface Meeting {
   action_items: ActionItem[]
   created_at: string
   synced?: boolean
+  status?: 'processing' | 'ready' | 'failed'
 }
 
 export interface ActionItem {
@@ -41,5 +42,6 @@ export const IpcChannels = {
   SyncPending: 'meeting:sync-pending',
   SimulateMeeting: 'meeting:simulate',
   DeleteMeeting: 'meeting:delete',
-  RegenerateSummary: 'meeting:regenerate-summary'
+  RegenerateSummary: 'meeting:regenerate-summary',
+  ProcessAndSave: 'audio:process-and-save'
 } as const

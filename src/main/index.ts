@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, screen, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, shell, Tray } from 'electron'
 import { join } from 'path'
 import { IpcChannels, Meeting, MeetingDetectedPayload, ProcessAudioResult } from '../shared/types'
 import { startMeetingWatcher, stopMeetingWatcher } from './meetingWatcher'
@@ -7,6 +7,8 @@ import { saveMeeting, listMeetings, syncPendingMeetings, deleteMeeting } from '.
 
 let dashboardWindow: BrowserWindow | null = null
 let pillWindow: BrowserWindow | null = null
+let tray: Tray | null = null
+let isQuitting = false
 
 function createDashboardWindow(): void {
   dashboardWindow = new BrowserWindow({
@@ -22,6 +24,9 @@ function createDashboardWindow(): void {
   })
 
   dashboardWindow.on('ready-to-show', () => dashboardWindow?.show())
+  dashboardWindow.on('closed', () => {
+    dashboardWindow = null
+  })
 
   dashboardWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
@@ -32,6 +37,16 @@ function createDashboardWindow(): void {
     dashboardWindow.loadURL(`${process.env.ELECTRON_RENDERER_URL}/dashboard.html`)
   } else {
     dashboardWindow.loadFile(join(__dirname, '../renderer/dashboard.html'))
+  }
+}
+
+function openDashboard(): void {
+  if (!dashboardWindow || dashboardWindow.isDestroyed()) {
+    createDashboardWindow()
+  } else {
+    if (dashboardWindow.isMinimized()) dashboardWindow.restore()
+    dashboardWindow.show()
+    dashboardWindow.focus()
   }
 }
 
@@ -61,6 +76,9 @@ function createPillWindow(): void {
 
   pillWindow.setAlwaysOnTop(true, 'floating')
   pillWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  pillWindow.on('closed', () => {
+    pillWindow = null
+  })
 
   if (process.env.ELECTRON_RENDERER_URL) {
     pillWindow.loadURL(`${process.env.ELECTRON_RENDERER_URL}/pill.html`)
@@ -86,20 +104,46 @@ function hidePill(): void {
   }
 }
 
-app.whenReady().then(async () => {
-  createDashboardWindow()
+function handleDetected(payload: MeetingDetectedPayload): void {
+  showPill(payload.title)
+  if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+    dashboardWindow.webContents.send(IpcChannels.MeetingDetected, payload)
+  }
+}
 
-  const handleDetected = (payload: MeetingDetectedPayload): void => {
-    showPill(payload.title)
-    dashboardWindow?.webContents.send(IpcChannels.MeetingDetected, payload)
+function handleEnded(): void {
+  if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+    dashboardWindow.webContents.send(IpcChannels.MeetingEnded)
   }
-  const handleEnded = (): void => {
-    dashboardWindow?.webContents.send(IpcChannels.MeetingEnded)
+}
+
+function startManualRecording(): void {
+  showPill('Gravação manual')
+}
+
+function createTray(): void {
+  if (tray) return
+  tray = new Tray(nativeImage.createEmpty())
+  tray.setTitle('● MN')
+  tray.setToolTip('MeetNotes')
+  const rebuildMenu = (): void => {
+    const menu = Menu.buildFromTemplate([
+      { label: 'Abrir MeetNotes', click: () => openDashboard() },
+      { label: 'Iniciar gravação', click: () => startManualRecording() },
+      { type: 'separator' },
+      { label: 'Sair', click: () => { isQuitting = true; app.quit() } }
+    ])
+    tray?.setContextMenu(menu)
   }
+  rebuildMenu()
+}
+
+app.whenReady().then(async () => {
+  createTray()
+  createDashboardWindow()
 
   startMeetingWatcher({ onDetected: handleDetected, onEnded: handleEnded })
 
-  // Attempt to sync anything offline.
   syncPendingMeetings().catch((err) => console.warn('Sync on boot failed:', err))
 
   ipcMain.handle(IpcChannels.ProcessAudio, async (_e, audioBuffer: ArrayBuffer): Promise<ProcessAudioResult> => {
@@ -108,30 +152,45 @@ app.whenReady().then(async () => {
 
   ipcMain.handle(IpcChannels.SaveMeeting, async (_e, meeting: Meeting) => {
     const saved = await saveMeeting(meeting)
-    dashboardWindow?.webContents.send(IpcChannels.MeetingEnded)
+    if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+      dashboardWindow.webContents.send(IpcChannels.MeetingEnded)
+    }
     return saved
   })
 
-  ipcMain.handle(IpcChannels.ListMeetings, async () => {
-    return listMeetings()
-  })
+  ipcMain.on(
+    IpcChannels.ProcessAndSave,
+    (_e, placeholder: Meeting, audioBuffer: ArrayBuffer) => {
+      void (async (): Promise<void> => {
+        try {
+          const result = await transcribeAndSummarize(Buffer.from(audioBuffer))
+          await saveMeeting({
+            ...placeholder,
+            raw_transcript: result.transcript,
+            summary: result.summary,
+            action_items: result.actionItems,
+            status: 'ready'
+          })
+        } catch (err) {
+          console.warn('process-and-save failed:', err)
+          await saveMeeting({ ...placeholder, status: 'failed' }).catch(() => undefined)
+        }
+        if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+          dashboardWindow.webContents.send(IpcChannels.MeetingEnded)
+        }
+      })()
+    }
+  )
 
-  ipcMain.handle(IpcChannels.SyncPending, async () => {
-    return syncPendingMeetings()
-  })
-
-  ipcMain.on(IpcChannels.PillStop, () => {
-    hidePill()
-  })
-
+  ipcMain.handle(IpcChannels.ListMeetings, async () => listMeetings())
+  ipcMain.handle(IpcChannels.SyncPending, async () => syncPendingMeetings())
+  ipcMain.on(IpcChannels.PillStop, () => hidePill())
   ipcMain.handle(IpcChannels.DeleteMeeting, async (_e, id: string) => {
     await deleteMeeting(id)
   })
-
   ipcMain.handle(IpcChannels.RegenerateSummary, async (_e, transcript: string) => {
     return summarizeTranscript(transcript)
   })
-
   ipcMain.handle(IpcChannels.SimulateMeeting, async (_e, title?: string) => {
     handleDetected({
       title: title?.trim() || 'Reunião de teste',
@@ -140,12 +199,14 @@ app.whenReady().then(async () => {
     })
   })
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createDashboardWindow()
-  })
+  app.on('activate', () => openDashboard())
+})
+
+app.on('before-quit', () => {
+  isQuitting = true
+  stopMeetingWatcher()
 })
 
 app.on('window-all-closed', () => {
-  stopMeetingWatcher()
-  if (process.platform !== 'darwin') app.quit()
+  if (process.platform !== 'darwin' && isQuitting) app.quit()
 })

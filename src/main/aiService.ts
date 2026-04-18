@@ -12,12 +12,16 @@ function getClient(): OpenAI {
   return client
 }
 
-const SUMMARY_PROMPT = `You are a meeting-notes assistant. Given a raw meeting transcript, produce:
-1. A concise markdown summary with sections: Context, Key Decisions, Discussion Highlights.
-2. A JSON array of action items with fields: owner (string|null), task (string), due (ISO date|null).
+const SUMMARY_PROMPT = `Você é um assistente de notas de reunião. Responda SEMPRE em português do Brasil (pt-BR), independentemente do idioma da transcrição.
 
-Respond strictly as JSON:
-{"summary": "<markdown>", "action_items": [...]}`
+A partir da transcrição bruta de uma reunião, produza:
+1. Um resumo conciso em Markdown com as seções: **Contexto**, **Principais Decisões**, **Destaques da Discussão**.
+2. Uma lista de action items em JSON, com os campos: owner (string|null), task (string), due (data ISO|null).
+
+Todo o conteúdo textual — títulos de seção, resumo e tarefas — deve estar em português do Brasil.
+
+Responda estritamente como JSON:
+{"summary": "<markdown em pt-BR>", "action_items": [...]}`
 
 export async function summarizeTranscript(
   transcript: string

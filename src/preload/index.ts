@@ -18,6 +18,9 @@ const api = {
   },
   processAudio: (audio: ArrayBuffer): Promise<ProcessAudioResult> =>
     ipcRenderer.invoke(IpcChannels.ProcessAudio, audio),
+  processAndSave: (placeholder: Meeting, audio: ArrayBuffer): void => {
+    ipcRenderer.send(IpcChannels.ProcessAndSave, placeholder, audio)
+  },
   saveMeeting: (meeting: Meeting): Promise<Meeting> =>
     ipcRenderer.invoke(IpcChannels.SaveMeeting, meeting),
   listMeetings: (): Promise<Meeting[]> => ipcRenderer.invoke(IpcChannels.ListMeetings),

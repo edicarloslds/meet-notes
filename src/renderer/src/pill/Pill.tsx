@@ -51,26 +51,27 @@ export function Pill(): ReactElement {
       window.meetnotes.closePill()
       return
     }
-    setState('transcribing')
+    const placeholder: Meeting = {
+      id: crypto.randomUUID(),
+      user_id: null,
+      title,
+      raw_transcript: '',
+      summary: '',
+      action_items: [],
+      created_at: new Date().toISOString(),
+      status: 'processing'
+    }
     try {
       const blob = await stop()
+      await window.meetnotes.saveMeeting(placeholder)
       const arrayBuffer = await blob.arrayBuffer()
-      const result = await window.meetnotes.processAudio(arrayBuffer)
-      setState('saving')
-      const meeting: Meeting = {
-        id: crypto.randomUUID(),
-        user_id: null,
-        title,
-        raw_transcript: result.transcript,
-        summary: result.summary,
-        action_items: result.actionItems,
-        created_at: new Date().toISOString()
-      }
-      await window.meetnotes.saveMeeting(meeting)
+      window.meetnotes.processAndSave(placeholder, arrayBuffer)
     } catch (err) {
       console.error('Stop pipeline failed:', err)
+      try {
+        await window.meetnotes.saveMeeting({ ...placeholder, status: 'failed' })
+      } catch { /* ignore */ }
     } finally {
-      setState('idle')
       window.meetnotes.closePill()
     }
   }

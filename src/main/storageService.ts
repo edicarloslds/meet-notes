@@ -79,6 +79,10 @@ export async function saveMeeting(meeting: Meeting): Promise<Meeting> {
   const record: Meeting = { ...meeting, synced: false }
   await upsertLocal(record)
 
+  if (record.status && record.status !== 'ready') {
+    return record
+  }
+
   try {
     const ok = await pushToSupabase(record)
     if (ok) {

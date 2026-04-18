@@ -5,17 +5,23 @@ type Callbacks = {
   onEnded: () => void
 }
 
-const MEETING_KEYWORDS = [/reuni[aã]o/i, /meeting/i, /microsoft teams/i]
 const TEAMS_APPS = [/teams/i, /microsoft teams/i]
+const TEAMS_TITLE_PATTERNS = [/reuni[aã]o/i, /meeting/i, /microsoft teams/i]
+const BROWSER_APPS = [/chrome/i, /arc/i, /brave/i, /edge/i, /safari/i, /firefox/i, /vivaldi/i]
+const MEET_TITLE_PATTERNS = [/meet\.google\.com/i, /google meet/i, /^meet\s*[-–]/i, /\bmeet\s*[-–]/i]
 
 let pollTimer: NodeJS.Timeout | null = null
 let currentMeetingTitle: string | null = null
 let warnedOnce = false
 
 function isMeetingWindow(title: string, owner: string): boolean {
-  const appMatch = TEAMS_APPS.some((r) => r.test(owner))
-  if (!appMatch) return false
-  return MEETING_KEYWORDS.some((r) => r.test(title))
+  if (TEAMS_APPS.some((r) => r.test(owner)) && TEAMS_TITLE_PATTERNS.some((r) => r.test(title))) {
+    return true
+  }
+  if (BROWSER_APPS.some((r) => r.test(owner)) && MEET_TITLE_PATTERNS.some((r) => r.test(title))) {
+    return true
+  }
+  return false
 }
 
 export function startMeetingWatcher(cb: Callbacks): void {
