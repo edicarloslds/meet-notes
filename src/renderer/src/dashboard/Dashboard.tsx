@@ -12,11 +12,13 @@ export function Dashboard(): ReactElement {
   const [draftTranscript, setDraftTranscript] = useState('')
   const [regenerating, setRegenerating] = useState(false)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; meeting: Meeting } | null>(null)
+  const [tab, setTab] = useState<'summary' | 'transcript' | 'actions'>('summary')
+  const [copied, setCopied] = useState(false)
 
   const refresh = async (): Promise<void> => {
     const list = await window.meetnotes.listMeetings()
     setMeetings(list)
-    if (!selectedId && list.length > 0) setSelectedId(list[0].id)
+    setSelectedId((cur) => cur ?? (list[0]?.id ?? null))
   }
 
   useEffect(() => {
@@ -139,7 +141,7 @@ export function Dashboard(): ReactElement {
                 key={m.id}
                 role="button"
                 tabIndex={0}
-                onClick={() => { setSelectedId(m.id); setIsEditing(false) }}
+                onClick={() => { setSelectedId(m.id); setIsEditing(false); setTab('summary') }}
                 onContextMenu={(e) => {
                   e.preventDefault()
                   setSelectedId(m.id)
@@ -147,7 +149,7 @@ export function Dashboard(): ReactElement {
                 }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
-                    setSelectedId(m.id); setIsEditing(false)
+                    setSelectedId(m.id); setIsEditing(false); setTab('summary')
                   }
                 }}
                 className={`relative w-full text-left px-4 py-3 border-b border-slate-100 hover:bg-slate-50 transition cursor-pointer ${
@@ -156,10 +158,10 @@ export function Dashboard(): ReactElement {
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-sm font-medium truncate flex-1">{m.title}</span>
-                  {status === 'processing' && (
+                  {(status === 'processing' || (regenerating && selectedId === m.id)) && (
                     <span className="shrink-0 text-[10px] text-sky-700 bg-sky-100 rounded px-1.5 py-0.5 flex items-center gap-1">
                       <span className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-pulse" />
-                      processando
+                      {regenerating && selectedId === m.id ? 'regenerando' : 'processando'}
                     </span>
                   )}
                   {status === 'failed' && (
@@ -184,18 +186,62 @@ export function Dashboard(): ReactElement {
 
       <main className="flex-1 overflow-y-auto">
         {selected ? (
-          <div className="max-w-3xl mx-auto p-8">
+          <div className="max-w-3xl mx-auto px-10 py-10">
             {!isEditing && (
-              <header className="mb-6">
-                <h2 className="text-2xl font-semibold">{selected.title}</h2>
-                <div className="text-sm text-slate-500 mt-1">
-                  {new Date(selected.created_at).toLocaleString()}
-                </div>
-              </header>
+              <>
+                <header className="mb-8">
+                  <div className="text-xs uppercase tracking-wider text-slate-400 mb-2">
+                    {formatHeaderDate(selected.created_at)}
+                  </div>
+                  <h2 className="text-4xl font-bold text-slate-900 leading-tight tracking-tight">
+                    {selected.title}
+                  </h2>
+                </header>
+
+                {selectedStatus === 'ready' && (
+                  <div className="flex items-center justify-between mb-8">
+                    <div className="inline-flex items-center gap-1 p-1 bg-slate-100 rounded-xl">
+                      <TabButton active={tab === 'summary'} onClick={() => setTab('summary')}>
+                        Resumo
+                      </TabButton>
+                      <TabButton active={tab === 'transcript'} onClick={() => setTab('transcript')}>
+                        Transcrição
+                      </TabButton>
+                      <TabButton active={tab === 'actions'} onClick={() => setTab('actions')}>
+                        Itens de Ação
+                      </TabButton>
+                    </div>
+                    {tab === 'summary' && selected.summary && (
+                      <button
+                        onClick={() => {
+                          void navigator.clipboard.writeText(selected.summary)
+                          setCopied(true)
+                          setTimeout(() => setCopied(false), 1500)
+                        }}
+                        className={`inline-flex items-center justify-center gap-1.5 text-sm transition-colors w-[140px] ${
+                          copied ? 'text-emerald-600' : 'text-slate-500 hover:text-slate-900'
+                        }`}
+                      >
+                        {copied ? (
+                          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M20 6L9 17l-5-5" />
+                          </svg>
+                        ) : (
+                          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <rect x="9" y="9" width="13" height="13" rx="2" />
+                            <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+                          </svg>
+                        )}
+                        <span>{copied ? 'Copiado!' : 'Copiar resumo'}</span>
+                      </button>
+                    )}
+                  </div>
+                )}
+              </>
             )}
 
             {selectedStatus === 'processing' && !isEditing && (
-              <section className="bg-white border border-sky-200 rounded-lg p-8 flex items-center gap-4">
+              <div className="flex items-center gap-4 py-10">
                 <div className="w-6 h-6 border-2 border-sky-200 border-t-sky-500 rounded-full animate-spin" />
                 <div>
                   <div className="text-sm font-medium text-slate-700">Processando transcrição…</div>
@@ -203,83 +249,107 @@ export function Dashboard(): ReactElement {
                     O resumo ficará disponível assim que a IA terminar.
                   </div>
                 </div>
-              </section>
+              </div>
             )}
 
             {selectedStatus === 'failed' && !isEditing && (
-              <section className="bg-white border border-red-200 rounded-lg p-6">
+              <div className="py-10">
                 <div className="text-sm font-medium text-red-700">Falha no processamento</div>
                 <div className="text-xs text-slate-500 mt-1">
                   Não foi possível transcrever esta gravação. Você pode excluí-la pela lista.
                 </div>
-              </section>
+              </div>
             )}
 
-            {selectedStatus === 'ready' && !isEditing && (
-              <>
-                {selected.action_items?.length > 0 && (
-                  <section className="mb-6 bg-white border border-slate-200 rounded-lg p-4">
-                    <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500 mb-2">
-                      Action Items
-                    </h3>
-                    <ul className="space-y-1">
-                      {selected.action_items.map((it, i) => (
-                        <li key={i} className="text-sm">
-                          <span className="font-medium">{it.owner ?? '—'}:</span> {it.task}
-                          {it.due && <span className="text-slate-500"> (até {it.due})</span>}
-                        </li>
-                      ))}
-                    </ul>
-                  </section>
-                )}
+            {selectedStatus === 'ready' && !isEditing && tab === 'summary' && regenerating && (
+              <div className="flex items-center gap-4 py-10">
+                <div className="w-6 h-6 border-2 border-sky-200 border-t-sky-500 rounded-full animate-spin" />
+                <div>
+                  <div className="text-sm font-medium text-slate-700">Regenerando resumo…</div>
+                  <div className="text-xs text-slate-500 mt-0.5">
+                    A IA está reprocessando a transcrição.
+                  </div>
+                </div>
+              </div>
+            )}
 
-                <section className="bg-white border border-slate-200 rounded-lg p-6">
-                  {selected.summary ? (
-                    <div className="prose prose-slate max-w-none">
+            {selectedStatus === 'ready' && !isEditing && tab === 'summary' && !regenerating && (
+              <section>
+                {selected.summary ? (
+                  <div>
+                    <div className="markdown-body">
                       <ReactMarkdown>{selected.summary}</ReactMarkdown>
                     </div>
-                  ) : (
-                    <div className="flex items-center justify-between gap-4">
-                      <p className="text-sm text-slate-500">
-                        {selected.raw_transcript.trim()
-                          ? 'Nenhum resumo gerado ainda.'
-                          : 'Sem transcrição — nada para resumir.'}
-                      </p>
-                      {selected.raw_transcript.trim() && (
+                    {selected.raw_transcript.trim() && (
+                      <div className="mt-8 pt-4 border-t border-slate-100 flex justify-end">
                         <button
                           onClick={() => void handleRegenerate()}
                           disabled={regenerating}
-                          className="shrink-0 text-xs font-medium bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white rounded-md px-3 py-1.5"
+                          className="text-xs text-slate-500 hover:text-slate-700 disabled:opacity-50"
                         >
-                          {regenerating ? 'Gerando…' : 'Gerar resumo'}
+                          {regenerating ? 'Regenerando…' : 'Regenerar a partir da transcrição'}
                         </button>
-                      )}
-                    </div>
-                  )}
-                  {selected.summary && selected.raw_transcript.trim() && (
-                    <div className="mt-4 pt-4 border-t border-slate-100 flex justify-end">
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="py-12 text-center">
+                    <p className="text-sm text-slate-500 mb-4">
+                      {selected.raw_transcript.trim()
+                        ? 'Nenhum resumo gerado ainda.'
+                        : 'Sem transcrição — nada para resumir.'}
+                    </p>
+                    {selected.raw_transcript.trim() && (
                       <button
                         onClick={() => void handleRegenerate()}
                         disabled={regenerating}
-                        className="text-xs text-slate-500 hover:text-slate-700 disabled:opacity-50"
+                        className="text-sm font-medium bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white rounded-md px-4 py-2"
                       >
-                        {regenerating ? 'Regenerando…' : 'Regenerar a partir da transcrição'}
+                        {regenerating ? 'Gerando…' : 'Gerar resumo'}
                       </button>
-                    </div>
-                  )}
-                </section>
-
-                {selected.raw_transcript && (
-                  <details className="mt-6 bg-white border border-slate-200 rounded-lg p-4">
-                    <summary className="cursor-pointer text-sm font-medium text-slate-600">
-                      Transcrição bruta
-                    </summary>
-                    <pre className="mt-3 whitespace-pre-wrap text-xs text-slate-700">
-                      {selected.raw_transcript}
-                    </pre>
-                  </details>
+                    )}
+                  </div>
                 )}
-              </>
+              </section>
+            )}
+
+            {selectedStatus === 'ready' && !isEditing && tab === 'transcript' && (
+              <section>
+                {selected.raw_transcript.trim() ? (
+                  <div className="space-y-4 text-[15px] leading-relaxed text-slate-700">
+                    {splitTranscript(selected.raw_transcript).map((para, i) => (
+                      <p key={i}>{para}</p>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="py-12 text-center text-sm text-slate-500">
+                    Sem transcrição disponível.
+                  </div>
+                )}
+              </section>
+            )}
+
+            {selectedStatus === 'ready' && !isEditing && tab === 'actions' && (
+              <section>
+                {selected.action_items?.length > 0 ? (
+                  <ul className="space-y-4">
+                    {selected.action_items.map((it, i) => (
+                      <li key={i} className="flex gap-3 text-[15px] leading-relaxed text-slate-700">
+                        <span className="mt-2 w-1.5 h-1.5 rounded-full bg-slate-400 shrink-0" />
+                        <div>
+                          {it.owner && <span className="font-semibold text-slate-900">{it.owner}: </span>}
+                          {it.task}
+                          {it.due && <span className="text-slate-500"> (até {it.due})</span>}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div className="py-12 text-center text-sm text-slate-500">
+                    Nenhum item de ação identificado.
+                  </div>
+                )}
+              </section>
             )}
 
             {isEditing && (
@@ -348,7 +418,7 @@ export function Dashboard(): ReactElement {
 
       {ctxMenu && (
         <div
-          className="fixed z-50 min-w-[160px] bg-white border border-slate-200 rounded-md shadow-lg py-1 text-sm"
+          className="fixed z-50 min-w-[160px] bg-white border border-slate-200 rounded-lg shadow-xl py-1 text-sm"
           style={{ left: ctxMenu.x, top: ctxMenu.y }}
           onClick={(e) => e.stopPropagation()}
         >
@@ -368,4 +438,51 @@ export function Dashboard(): ReactElement {
       )}
     </div>
   )
+}
+
+function TabButton({
+  active,
+  onClick,
+  children
+}: {
+  active: boolean
+  onClick: () => void
+  children: React.ReactNode
+}): ReactElement {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${
+        active
+          ? 'bg-white text-slate-900 shadow-sm'
+          : 'text-slate-500 hover:text-slate-800'
+      }`}
+    >
+      {children}
+    </button>
+  )
+}
+
+function formatHeaderDate(iso: string): string {
+  const d = new Date(iso)
+  return d.toLocaleDateString('pt-BR', {
+    weekday: 'long',
+    day: '2-digit',
+    month: 'short'
+  })
+}
+
+function splitTranscript(text: string): string[] {
+  const trimmed = text.trim()
+  if (!trimmed) return []
+  if (/\n\s*\n/.test(trimmed)) {
+    return trimmed.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean)
+  }
+  const sentences = trimmed.match(/[^.!?]+[.!?]+(?:\s|$)|[^.!?]+$/g) ?? [trimmed]
+  const chunks: string[] = []
+  const size = 3
+  for (let i = 0; i < sentences.length; i += size) {
+    chunks.push(sentences.slice(i, i + size).join(' ').trim())
+  }
+  return chunks
 }

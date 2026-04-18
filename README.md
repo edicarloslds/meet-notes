@@ -1,21 +1,32 @@
 # MeetNotes
 
-Desktop app (macOS) que detecta reuniões do Microsoft Teams, grava o áudio, transcreve com Whisper, resume com GPT-4o e persiste no Supabase — com fallback offline.
+Desktop app (macOS) que detecta reuniões do Microsoft Teams, grava o áudio, transcreve localmente com whisper.cpp, resume via Ollama e persiste no Supabase — com fallback offline.
 
 ## Stack
 
 - **Electron 41** + **electron-vite 5** (Main em TypeScript, Vite 7)
 - **React 19** + **TypeScript 5.9** + **Tailwind CSS 4** (via `@tailwindcss/vite`)
 - **Supabase** (Postgres + Auth) — `@supabase/supabase-js` 2.103
-- **OpenAI** 6.x (Whisper + GPT-4o, JSON mode)
+- **whisper.cpp** (transcrição local via binário `whisper-cli`) + **ffmpeg** (conversão webm→wav)
+- **Ollama** (resumo local, JSON mode)
 - `get-windows` 9 (detecção de janela, sucessor do `active-win`), `electron-store` 11 (offline)
 
 ## Setup
 
 Requer **pnpm ≥ 10** e Node ≥ 20.
 
+Dependências externas (macOS):
+
 ```bash
-cp .env.example .env       # preencha suas chaves
+brew install whisper-cpp ffmpeg ollama
+# baixe um modelo whisper.cpp, ex.:
+curl -L -o ~/models/ggml-large-v3-turbo.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
+ollama pull gemma4
+```
+
+```bash
+cp .env.example .env       # preencha as variáveis
 pnpm install
 pnpm approve-builds        # permite o postinstall nativo do get-windows
 pnpm dev
@@ -33,9 +44,14 @@ pnpm dev
 ### Variáveis de ambiente (`.env`)
 
 ```
-MAIN_VITE_OPENAI_API_KEY=sk-...
 MAIN_VITE_SUPABASE_URL=https://xxx.supabase.co
 MAIN_VITE_SUPABASE_ANON_KEY=eyJ...
+MAIN_VITE_OLLAMA_HOST=http://127.0.0.1:11434
+MAIN_VITE_OLLAMA_MODEL=gemma4
+MAIN_VITE_WHISPER_BIN=whisper-cli
+MAIN_VITE_WHISPER_MODEL=/Users/you/models/ggml-large-v3-turbo.bin
+MAIN_VITE_WHISPER_LANGUAGE=pt
+MAIN_VITE_FFMPEG_BIN=ffmpeg
 ```
 
 O prefixo `MAIN_VITE_` é injetado pelo electron-vite no processo **Main** (nunca exposto no renderer).
@@ -68,7 +84,7 @@ src/
   main/                 # Processo Main (Node/Electron)
     index.ts            # Bootstrap, BrowserWindows, IPC handlers
     meetingWatcher.ts   # Poll via get-windows (Teams + "Reunião"/"Meeting")
-    aiService.ts        # Whisper + GPT-4o (JSON mode)
+    aiService.ts        # whisper.cpp (ffmpeg + whisper-cli) + Ollama (JSON mode)
     storageService.ts   # Supabase + electron-store (fila offline)
   preload/
     index.ts            # contextBridge → window.meetnotes
@@ -88,7 +104,7 @@ src/
 1. `meetingWatcher` faz poll a cada 3s com `get-windows`. Se o owner é Teams e o título contém "Reunião"/"Meeting", dispara `meeting:detected`.
 2. O Main cria um `BrowserWindow` pílula (frameless, transparente, `alwaysOnTop`).
 3. Usuário clica **Gravar** → `useAudioRecorder` usa `chromeMediaSource: 'desktop'` (loopback) com fallback para microfone.
-4. Ao clicar **Parar**: estado vai para `transcribing` (loader *"IA gerando resumo…"*), o Main chama Whisper + GPT-4o e retorna `{ transcript, summary, action_items }`.
+4. Ao clicar **Parar**: estado vai para `transcribing` (loader *"IA gerando resumo…"*), o Main converte o webm para WAV 16kHz via `ffmpeg`, roda `whisper-cli` local e chama o Ollama para resumir, retornando `{ transcript, summary, action_items }`.
 5. Estado `saving`: grava em `electron-store` (sempre) e faz upsert no Supabase. Se falhar, entra em fila `pending`.
 6. Ao voltar online, `syncPendingMeetings` reenvia. O Dashboard escuta `window.online` para disparar o sync automaticamente.
 

@@ -12,7 +12,19 @@
       "Bash(node install.js)",
       "Bash(pnpm exec *)",
       "Bash(pnpm add *)",
-      "Bash(node scripts/build-icons.mjs)"
+      "Bash(node scripts/build-icons.mjs)",
+      "Bash(ollama --version)",
+      "Bash(brew install *)",
+      "Bash(brew services *)",
+      "Bash(curl -sf http://127.0.0.1:11434/api/tags)",
+      "Bash(ollama pull *)",
+      "Bash(ollama list *)",
+      "Bash(curl -s http://127.0.0.1:11434/api/chat -d '{\"model\":\"gemma4\",\"stream\":false,\"format\":\"json\",\"messages\":[{\"role\":\"user\",\"content\":\"Responda em JSON: {\\\\\"ok\\\\\": true}\"}]}')",
+      "Bash(brew list *)",
+      "Read(//Users/Edicarlos/**)",
+      "Read(//Users/Edicarlos/Downloads/**)",
+      "Bash(mkdir -p ~/models)",
+      "Bash(curl -L -f -o ~/models/ggml-large-v3-turbo.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin)"
     ]
   }
 }
