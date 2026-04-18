@@ -11,7 +11,7 @@ export function Dashboard(): ReactElement {
   const [draftTitle, setDraftTitle] = useState('')
   const [draftTranscript, setDraftTranscript] = useState('')
   const [regenerating, setRegenerating] = useState(false)
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; meeting: Meeting } | null>(null)
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
   const [tab, setTab] = useState<'summary' | 'transcript' | 'actions'>('summary')
   const [copied, setCopied] = useState(false)
 
@@ -32,16 +32,16 @@ export function Dashboard(): ReactElement {
       }
     }
     window.addEventListener('online', handleOnline)
-    const closeCtx = (): void => setCtxMenu(null)
-    window.addEventListener('click', closeCtx)
-    window.addEventListener('scroll', closeCtx, true)
+    const closePending = (): void => setPendingDeleteId(null)
+    window.addEventListener('click', closePending)
+    window.addEventListener('scroll', closePending, true)
     const offEnded = window.meetnotes.onMeetingEnded(() => void refresh())
     const offDetected = window.meetnotes.onMeetingDetected(() => void refresh())
     const interval = window.setInterval(() => void refresh(), 5000)
     return () => {
       window.removeEventListener('online', handleOnline)
-      window.removeEventListener('click', closeCtx)
-      window.removeEventListener('scroll', closeCtx, true)
+      window.removeEventListener('click', closePending)
+      window.removeEventListener('scroll', closePending, true)
       offEnded()
       offDetected()
       window.clearInterval(interval)
@@ -80,9 +80,9 @@ export function Dashboard(): ReactElement {
     await refresh()
   }
 
-  const deleteById = async (m: Meeting): Promise<void> => {
-    if (!window.confirm(`Excluir "${m.title}"?`)) return
+  const confirmDelete = async (m: Meeting): Promise<void> => {
     await window.meetnotes.deleteMeeting(m.id)
+    setPendingDeleteId(null)
     if (selectedId === m.id) {
       setSelectedId(null)
       setIsEditing(false)
@@ -138,44 +138,84 @@ export function Dashboard(): ReactElement {
           )}
           {filtered.map((m) => {
             const status = m.status ?? 'ready'
+            const isPendingDelete = pendingDeleteId === m.id
+            const actionsDisabled = status === 'processing'
             return (
               <div
                 key={m.id}
                 role="button"
                 tabIndex={0}
                 onClick={() => { setSelectedId(m.id); setIsEditing(false); setTab('summary') }}
-                onContextMenu={(e) => {
-                  e.preventDefault()
-                  setSelectedId(m.id)
-                  setCtxMenu({ x: e.clientX, y: e.clientY, meeting: m })
-                }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     setSelectedId(m.id); setIsEditing(false); setTab('summary')
                   }
                 }}
-                className={`relative w-full text-left px-4 py-3 border-b border-slate-100 hover:bg-slate-50 transition cursor-pointer ${
+                className={`group relative w-full text-left px-4 py-3 border-b border-slate-100 hover:bg-slate-50 transition cursor-pointer ${
                   selectedId === m.id ? 'bg-sky-50' : ''
                 }`}
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-sm font-medium truncate flex-1">{m.title}</span>
-                  {(status === 'processing' || (regenerating && selectedId === m.id)) && (
-                    <span className="shrink-0 text-[10px] text-sky-700 bg-sky-100 rounded px-1.5 py-0.5 flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-pulse" />
-                      {regenerating && selectedId === m.id ? 'regenerando' : 'processando'}
-                    </span>
-                  )}
-                  {status === 'failed' && (
-                    <span className="shrink-0 text-[10px] text-red-700 bg-red-100 rounded px-1.5 py-0.5">
-                      falhou
-                    </span>
-                  )}
-                  {status === 'ready' && m.synced === false && (
-                    <span className="shrink-0 text-[10px] text-amber-600 bg-amber-50 rounded px-1.5 py-0.5">
-                      offline
-                    </span>
-                  )}
+
+                  <div className="shrink-0 flex items-center gap-1">
+                    {(status === 'processing' || (regenerating && selectedId === m.id)) && (
+                      <span className="text-[10px] text-sky-700 bg-sky-100 rounded px-1.5 py-0.5 flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-pulse" />
+                        {regenerating && selectedId === m.id ? 'regenerando' : 'processando'}
+                      </span>
+                    )}
+                    {status === 'failed' && !isPendingDelete && (
+                      <span className="text-[10px] text-red-700 bg-red-100 rounded px-1.5 py-0.5">
+                        falhou
+                      </span>
+                    )}
+                    {status === 'ready' && m.synced === false && !isPendingDelete && (
+                      <span className="text-[10px] text-amber-600 bg-amber-50 rounded px-1.5 py-0.5">
+                        offline
+                      </span>
+                    )}
+
+                    {!actionsDisabled && (
+                      isPendingDelete ? (
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); void confirmDelete(m) }}
+                          className="text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-md px-2 py-1"
+                        >
+                          Confirmar
+                        </button>
+                      ) : (
+                        <div className="hidden group-hover:flex items-center gap-0.5">
+                          <button
+                            type="button"
+                            aria-label="Editar"
+                            title="Editar"
+                            onClick={(e) => { e.stopPropagation(); startEdit(m) }}
+                            className="p-1 rounded-md text-slate-500 hover:text-slate-800 hover:bg-slate-200/70"
+                          >
+                            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M12 20h9" />
+                              <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+                            </svg>
+                          </button>
+                          <button
+                            type="button"
+                            aria-label="Excluir"
+                            title="Excluir"
+                            onClick={(e) => { e.stopPropagation(); setPendingDeleteId(m.id) }}
+                            className="p-1 rounded-md text-slate-500 hover:text-red-600 hover:bg-red-50"
+                          >
+                            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M3 6h18" />
+                              <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                            </svg>
+                          </button>
+                        </div>
+                      )
+                    )}
+                  </div>
                 </div>
                 <div className="text-xs text-slate-500 mt-1">
                   {new Date(m.created_at).toLocaleString()}
@@ -426,26 +466,6 @@ export function Dashboard(): ReactElement {
         )}
       </main>
 
-      {ctxMenu && (ctxMenu.meeting.status ?? 'ready') !== 'processing' && (
-        <div
-          className="fixed z-50 min-w-[160px] bg-white border border-slate-200 rounded-lg shadow-xl py-1 text-sm"
-          style={{ left: ctxMenu.x, top: ctxMenu.y }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <button
-            onClick={() => { startEdit(ctxMenu.meeting); setCtxMenu(null) }}
-            className="w-full text-left px-3 py-1.5 hover:bg-slate-100 text-slate-700"
-          >
-            Editar
-          </button>
-          <button
-            onClick={() => { void deleteById(ctxMenu.meeting); setCtxMenu(null) }}
-            className="w-full text-left px-3 py-1.5 hover:bg-red-50 text-red-600"
-          >
-            Excluir
-          </button>
-        </div>
-      )}
     </div>
   )
 }

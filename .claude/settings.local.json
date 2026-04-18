@@ -24,7 +24,8 @@
       "Read(//Users/Edicarlos/**)",
       "Read(//Users/Edicarlos/Downloads/**)",
       "Bash(mkdir -p ~/models)",
-      "Bash(curl -L -f -o ~/models/ggml-large-v3-turbo.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin)"
+      "Bash(curl -L -f -o ~/models/ggml-large-v3-turbo.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin)",
+      "Bash(npx tsc *)"
     ]
   }
 }
