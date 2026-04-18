@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx skills *)",
+      "Bash(pnpm --version)",
+      "Bash(pnpm install *)",
+      "Bash(npm view *)",
+      "Bash(pnpm approve-builds *)",
+      "Bash(pnpm typecheck *)",
+      "Bash(pnpm build *)",
+      "Bash(timeout 25 pnpm dev)",
+      "Bash(node install.js)"
+    ]
+  }
+}

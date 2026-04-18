@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+@theme {
+  --animate-pulse-rec: pulse-rec 1.2s ease-in-out infinite;
+
+  @keyframes pulse-rec {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%      { opacity: 0.4; transform: scale(0.85); }
+  }
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: transparent;
+  color: #0f172a;
+}
+
+.dashboard-body {
+  background: #f8fafc;
+}
