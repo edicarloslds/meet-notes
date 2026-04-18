@@ -5,6 +5,8 @@ import { join } from 'path'
 import ffmpegStatic from 'ffmpeg-static'
 import {
   ActionItem,
+  OLLAMA_NOT_READY_MARKER,
+  OllamaStatus,
   ProcessAudioResult,
   StageName,
   StageStatus,
@@ -303,6 +305,71 @@ export async function getWhisperStatus(): Promise<WhisperStatus> {
   return status
 }
 
+export async function getOllamaStatus(): Promise<OllamaStatus> {
+  const host = getSettingSync('ollamaHost') || OLLAMA_HOST_DEFAULT
+  const selectedModel = getSettingSync('ollamaModel') || OLLAMA_MODEL_DEFAULT
+  const status: OllamaStatus = {
+    reachable: false,
+    host,
+    models: [],
+    selectedModel,
+    selectedModelInstalled: false
+  }
+
+  try {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 3000)
+    const [tagsRes, versionRes] = await Promise.all([
+      fetch(`${host}/api/tags`, { signal: ctrl.signal }),
+      fetch(`${host}/api/version`, { signal: ctrl.signal }).catch(() => null)
+    ])
+    clearTimeout(timer)
+
+    if (!tagsRes.ok) {
+      status.error = `Ollama respondeu com HTTP ${tagsRes.status}.`
+      return status
+    }
+    status.reachable = true
+    const data = (await tagsRes.json()) as { models?: Array<{ name?: string }> }
+    status.models = (data.models ?? []).map((m) => m.name ?? '').filter(Boolean)
+    status.selectedModelInstalled = status.models.some(
+      (m) => m === selectedModel || m.startsWith(`${selectedModel}:`) || m === `${selectedModel}:latest`
+    )
+    if (versionRes?.ok) {
+      const v = (await versionRes.json()) as { version?: string }
+      if (v.version) status.version = v.version
+    }
+  } catch (err) {
+    const msg = (err as Error).message || 'Falha ao conectar ao Ollama.'
+    status.error =
+      (err as Error).name === 'AbortError'
+        ? `Timeout ao conectar em ${host}. Ollama está rodando?`
+        : msg
+  }
+
+  return status
+}
+
+export async function assertOllamaReady(): Promise<void> {
+  const status = await getOllamaStatus()
+  if (!status.reachable) {
+    throw new Error(
+      `${OLLAMA_NOT_READY_MARKER} Ollama indisponível em ${status.host}. ${status.error ?? 'Verifique se o serviço está rodando.'} Abra Configurações.`
+    )
+  }
+  if (!status.selectedModelInstalled) {
+    throw new Error(
+      `${OLLAMA_NOT_READY_MARKER} Modelo "${status.selectedModel}" não está instalado no Ollama. Rode \`ollama pull ${status.selectedModel}\` ou escolha outro em Configurações.`
+    )
+  }
+}
+
+export function isOllamaNotReadyError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false
+  const msg = (err as { message?: string }).message
+  return typeof msg === 'string' && msg.includes(OLLAMA_NOT_READY_MARKER)
+}
+
 export async function assertWhisperReady(): Promise<void> {
   const status = await getWhisperStatus()
   if (!status.binAvailable) {
@@ -323,6 +390,7 @@ export async function transcribeAndSummarize(
   signal?: AbortSignal
 ): Promise<ProcessAudioResult> {
   await assertWhisperReady()
+  await assertOllamaReady()
 
   const dir = await mkdtemp(join(tmpdir(), 'meetnotes-'))
   let wavPath: string

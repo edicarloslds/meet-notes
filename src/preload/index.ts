@@ -7,6 +7,7 @@ import {
   MeetingDetectedPayload,
   MeetingProgressEvent,
   ModelDownloadProgress,
+  OllamaStatus,
   ProcessAudioResult,
   WhisperModelInfo,
   WhisperModelStatus,
@@ -71,6 +72,8 @@ const api = {
     ipcRenderer.invoke(IpcChannels.DeleteModel, id),
   getWhisperStatus: (): Promise<WhisperStatus> =>
     ipcRenderer.invoke(IpcChannels.GetWhisperStatus),
+  getOllamaStatus: (): Promise<OllamaStatus> =>
+    ipcRenderer.invoke(IpcChannels.GetOllamaStatus),
   onModelProgress: (cb: (p: ModelDownloadProgress) => void): (() => void) => {
     const listener = (_: unknown, payload: ModelDownloadProgress): void => cb(payload)
     ipcRenderer.on(IpcChannels.ModelProgress, listener)

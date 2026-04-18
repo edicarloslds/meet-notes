@@ -11,7 +11,7 @@ import {
   StageStatus
 } from '../shared/types'
 import { startMeetingWatcher, stopMeetingWatcher } from './meetingWatcher'
-import { getWhisperStatus, isAbortError, transcribeAndSummarize, summarizeTranscript } from './aiService'
+import { getOllamaStatus, getWhisperStatus, isAbortError, transcribeAndSummarize, summarizeTranscript } from './aiService'
 import {
   cleanupStaleProcessing,
   deleteMeeting,
@@ -298,6 +298,7 @@ app.whenReady().then(async () => {
     }
   })
   ipcMain.handle(IpcChannels.GetWhisperStatus, async () => getWhisperStatus())
+  ipcMain.handle(IpcChannels.GetOllamaStatus, async () => getOllamaStatus())
   ipcMain.handle(IpcChannels.SimulateMeeting, async (_e, title?: string) => {
     handleDetected({
       title: title?.trim() || 'Reunião de teste',

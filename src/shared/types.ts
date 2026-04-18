@@ -57,6 +57,17 @@ export type StageName = 'converting' | 'transcribing' | 'summarizing' | 'saving'
 export type StageStatus = 'active' | 'done' | 'failed'
 
 export const WHISPER_NOT_READY_MARKER = '[whisper-not-ready]'
+export const OLLAMA_NOT_READY_MARKER = '[ollama-not-ready]'
+
+export interface OllamaStatus {
+  reachable: boolean
+  host: string
+  version?: string
+  models: string[]
+  selectedModel: string
+  selectedModelInstalled: boolean
+  error?: string
+}
 
 export interface MeetingProgressEvent {
   meetingId: string
@@ -114,5 +125,6 @@ export const IpcChannels = {
   CancelModelDownload: 'models:cancel',
   DeleteModel: 'models:delete',
   ModelProgress: 'models:progress',
-  GetWhisperStatus: 'whisper:status'
+  GetWhisperStatus: 'whisper:status',
+  GetOllamaStatus: 'ollama:status'
 } as const

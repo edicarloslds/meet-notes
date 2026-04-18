@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import ReactMarkdown from 'react-markdown'
-import { WHISPER_NOT_READY_MARKER, type Meeting, type WhisperStatus } from '../../../shared/types'
+import {
+  OLLAMA_NOT_READY_MARKER,
+  WHISPER_NOT_READY_MARKER,
+  type Meeting,
+  type OllamaStatus,
+  type WhisperStatus
+} from '../../../shared/types'
 import { SettingsPanel } from './SettingsPanel'
 import { ProcessingTimeline, type TimelineState } from './ProcessingTimeline'
 
@@ -18,6 +24,7 @@ export function Dashboard(): ReactElement {
   const [copied, setCopied] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [whisperStatus, setWhisperStatus] = useState<WhisperStatus | null>(null)
+  const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null)
   const [progressByMeeting, setProgressByMeeting] = useState<Record<string, TimelineState>>({})
   const [tickNow, setTickNow] = useState(() => Date.now())
   const tickIntervalRef = useRef<number | null>(null)
@@ -28,10 +35,14 @@ export function Dashboard(): ReactElement {
     setSelectedId((cur) => cur ?? (list[0]?.id ?? null))
   }
 
-  const refreshWhisperStatus = async (): Promise<void> => {
+  const refreshStatuses = async (): Promise<void> => {
     try {
-      const s = await window.meetnotes.getWhisperStatus()
-      setWhisperStatus(s)
+      const [w, o] = await Promise.all([
+        window.meetnotes.getWhisperStatus(),
+        window.meetnotes.getOllamaStatus()
+      ])
+      setWhisperStatus(w)
+      setOllamaStatus(o)
     } catch {
       /* ignore */
     }
@@ -39,7 +50,7 @@ export function Dashboard(): ReactElement {
 
   useEffect(() => {
     void refresh()
-    void refreshWhisperStatus()
+    void refreshStatuses()
     const handleOnline = async (): Promise<void> => {
       const res = await window.meetnotes.syncPending()
       if (res.synced > 0) {
@@ -229,10 +240,10 @@ export function Dashboard(): ReactElement {
                 key={m.id}
                 role="button"
                 tabIndex={0}
-                onClick={() => { setSelectedId(m.id); setIsEditing(false); setTab('summary') }}
+                onClick={() => { setShowSettings(false); setSelectedId(m.id); setIsEditing(false); setTab('summary') }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
-                    setSelectedId(m.id); setIsEditing(false); setTab('summary')
+                    setShowSettings(false); setSelectedId(m.id); setIsEditing(false); setTab('summary')
                   }
                 }}
                 className={`group relative w-full text-left px-4 py-3 border-b border-slate-100 hover:bg-slate-50 transition cursor-pointer ${
@@ -326,25 +337,40 @@ export function Dashboard(): ReactElement {
       </aside>
 
       <main className="flex-1 overflow-y-auto">
-        {!showSettings && whisperStatus && (!whisperStatus.binAvailable || !whisperStatus.model) && (
-          <div className="bg-amber-50 border-b border-amber-200 px-6 py-3 flex items-center justify-between gap-4">
-            <div className="text-sm text-amber-900">
-              <span className="font-medium">Whisper não está pronto.</span>{' '}
-              {!whisperStatus.binAvailable
+        {!showSettings && (() => {
+          const whisperIssue =
+            whisperStatus && (!whisperStatus.binAvailable || !whisperStatus.model)
+              ? !whisperStatus.binAvailable
                 ? 'Instale o whisper-cli (ex.: brew install whisper-cpp).'
-                : 'Nenhum modelo selecionado.'}
+                : 'Nenhum modelo do Whisper selecionado.'
+              : null
+          const ollamaIssue =
+            ollamaStatus && (!ollamaStatus.reachable || !ollamaStatus.selectedModelInstalled)
+              ? !ollamaStatus.reachable
+                ? `Ollama indisponível em ${ollamaStatus.host}.`
+                : `Modelo "${ollamaStatus.selectedModel}" não instalado no Ollama.`
+              : null
+          if (!whisperIssue && !ollamaIssue) return null
+          const msgs = [whisperIssue && `Whisper: ${whisperIssue}`, ollamaIssue && `Ollama: ${ollamaIssue}`]
+            .filter(Boolean)
+            .join(' · ')
+          return (
+            <div className="bg-amber-50 border-b border-amber-200 px-6 py-3 flex items-center justify-between gap-4">
+              <div className="text-sm text-amber-900">
+                <span className="font-medium">Dependências pendentes.</span> {msgs}
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSettings(true)}
+                className="shrink-0 text-xs font-medium bg-amber-600 hover:bg-amber-500 text-white rounded-md px-3 py-1.5"
+              >
+                Abrir Configurações
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => setShowSettings(true)}
-              className="shrink-0 text-xs font-medium bg-amber-600 hover:bg-amber-500 text-white rounded-md px-3 py-1.5"
-            >
-              Abrir Configurações
-            </button>
-          </div>
-        )}
+          )
+        })()}
         {showSettings ? (
-          <SettingsPanel onClose={() => { setShowSettings(false); void refreshWhisperStatus() }} />
+          <SettingsPanel onClose={() => { setShowSettings(false); void refreshStatuses() }} />
         ) : selected ? (
           <div className="max-w-3xl mx-auto px-10 py-10">
             {!isEditing && (
@@ -425,8 +451,13 @@ export function Dashboard(): ReactElement {
               const errors = Object.values(progressByMeeting[selected.id] ?? {})
                 .map((s) => s?.error)
                 .filter(Boolean) as string[]
-              const notReadyErr = errors.find((e) => e.includes(WHISPER_NOT_READY_MARKER))
-              const cleanErr = notReadyErr?.replace(WHISPER_NOT_READY_MARKER, '').trim()
+              const notReadyErr = errors.find(
+                (e) => e.includes(WHISPER_NOT_READY_MARKER) || e.includes(OLLAMA_NOT_READY_MARKER)
+              )
+              const cleanErr = notReadyErr
+                ?.replace(WHISPER_NOT_READY_MARKER, '')
+                .replace(OLLAMA_NOT_READY_MARKER, '')
+                .trim()
               return (
                 <div className="py-10">
                   <div className="text-sm font-medium text-red-700">Falha no processamento</div>
