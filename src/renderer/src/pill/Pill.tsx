@@ -1,14 +1,13 @@
 import { useEffect, useRef, useState, type ReactElement } from 'react'
-import type { PillState, Meeting } from '../../../shared/types'
+import type { Meeting } from '../../../shared/types'
 import { useAudioRecorder } from '../hooks/useAudioRecorder'
 
 export function Pill(): ReactElement {
-  const [state, setState] = useState<PillState>('idle')
   const [title, setTitle] = useState<string>('Reunião detectada')
   const [elapsed, setElapsed] = useState(0)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const tickRef = useRef<number | null>(null)
-  const { start, stop, isRecording } = useAudioRecorder()
+  const { start, stop, isRecording, stream } = useAudioRecorder()
 
   useEffect(() => {
     const off = window.meetnotes.onMeetingDetected((p) => {
@@ -18,7 +17,7 @@ export function Pill(): ReactElement {
   }, [])
 
   useEffect(() => {
-    if (state === 'recording') {
+    if (isRecording) {
       const t0 = Date.now()
       tickRef.current = window.setInterval(() => {
         setElapsed(Math.floor((Date.now() - t0) / 1000))
@@ -31,19 +30,24 @@ export function Pill(): ReactElement {
     return () => {
       if (tickRef.current) clearInterval(tickRef.current)
     }
-  }, [state])
+  }, [isRecording])
 
   const handleStart = async (): Promise<void> => {
     setErrorMsg(null)
     try {
       await start()
-      setState('recording')
     } catch (err) {
       console.error('Failed to start recording:', err)
       const msg = err instanceof Error ? err.message : String(err)
       setErrorMsg(/permission|denied|notallowed/i.test(msg) ? 'Permissão negada' : 'Falha ao gravar')
-      setState('idle')
     }
+  }
+
+  const handleCancel = async (): Promise<void> => {
+    if (isRecording) {
+      try { await stop() } catch { /* ignore */ }
+    }
+    window.meetnotes.closePill()
   }
 
   const handleStop = async (): Promise<void> => {
@@ -84,82 +88,119 @@ export function Pill(): ReactElement {
 
   return (
     <div className="w-full h-full flex items-center justify-center p-1">
-      <div className="flex items-center gap-3 px-4 h-14 w-[240px] rounded-full bg-slate-900/70 backdrop-blur-md border border-white/10 shadow-2xl text-white">
-        <div className="flex items-center gap-2 flex-1 min-w-0">
-          <StatusDot state={state} />
-          <div className="flex flex-col min-w-0">
-            <span className="text-[11px] uppercase tracking-wide text-white/60 truncate">
-              {labelFor(state)}
-            </span>
-            {state === 'recording' && (
-              <span className="text-xs font-mono text-white/80">{fmt(elapsed)}</span>
-            )}
-            {state === 'transcribing' && (
-              <span className="text-xs text-white/70 truncate">IA gerando resumo…</span>
-            )}
-            {state === 'saving' && (
-              <span className="text-xs text-white/70 truncate">Salvando…</span>
-            )}
-            {state === 'idle' && (
-              <span className={`text-xs truncate ${errorMsg ? 'text-red-300' : 'text-white/70'}`}>
+      <div className="flex items-center gap-2 px-3 h-14 w-full rounded-full bg-slate-900/75 backdrop-blur-md border border-white/10 shadow-2xl text-white">
+        {isRecording ? (
+          <>
+            <button
+              onClick={() => void handleCancel()}
+              title="Cancelar"
+              className="shrink-0 w-8 h-8 flex items-center justify-center rounded-full text-white/70 hover:text-white hover:bg-white/10 transition"
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <path d="M6 6l12 12M18 6L6 18" />
+              </svg>
+            </button>
+
+            <div className="flex-1 flex items-center justify-center gap-3 min-w-0">
+              <ListenBars stream={stream} />
+              <span className="text-xs font-mono text-white/80 tabular-nums">{fmt(elapsed)}</span>
+            </div>
+
+            <button
+              onClick={() => void handleStop()}
+              title="Parar gravação"
+              className="shrink-0 h-8 px-3 flex items-center gap-1.5 rounded-full bg-red-500 hover:bg-red-400 text-white text-xs font-medium transition"
+            >
+              <span className="w-2.5 h-2.5 rounded-sm bg-white" />
+              Parar
+            </button>
+          </>
+        ) : (
+          <>
+            <div className="flex-1 flex flex-col min-w-0 pl-2">
+              <span className="text-[10px] uppercase tracking-wider text-white/50">
+                {errorMsg ? 'Erro' : 'Reunião'}
+              </span>
+              <span className={`text-xs truncate ${errorMsg ? 'text-red-300' : 'text-white/85'}`}>
                 {errorMsg ?? title}
               </span>
-            )}
-          </div>
-        </div>
-        {state === 'idle' && (
-          <button
-            onClick={handleStart}
-            className="shrink-0 text-xs font-medium bg-red-500 hover:bg-red-400 text-white rounded-full px-3 py-1 transition"
-          >
-            Gravar
-          </button>
-        )}
-        {state === 'recording' && (
-          <button
-            onClick={handleStop}
-            className="shrink-0 text-xs font-medium bg-white text-slate-900 rounded-full px-3 py-1 hover:bg-white/90 transition"
-          >
-            Parar
-          </button>
-        )}
-        {(state === 'transcribing' || state === 'saving') && (
-          <div className="shrink-0 w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-        )}
-        {(state === 'idle' || state === 'recording') && (
-          <button
-            onClick={async () => {
-              if (isRecording) {
-                try { await stop() } catch { /* ignore */ }
-              }
-              window.meetnotes.closePill()
-            }}
-            title="Fechar"
-            className="shrink-0 w-6 h-6 flex items-center justify-center rounded-full text-white/60 hover:text-white hover:bg-white/10 transition"
-          >
-            ×
-          </button>
+            </div>
+
+            <button
+              onClick={() => void handleStart()}
+              className="shrink-0 h-8 px-3 flex items-center gap-1.5 rounded-full bg-emerald-500 hover:bg-emerald-400 text-white text-xs font-medium transition"
+            >
+              <span className="w-2 h-2 rounded-full bg-white" />
+              Iniciar
+            </button>
+
+            <button
+              onClick={() => void handleCancel()}
+              title="Fechar"
+              className="shrink-0 w-7 h-7 flex items-center justify-center rounded-full text-white/60 hover:text-white hover:bg-white/10 transition"
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <path d="M6 6l12 12M18 6L6 18" />
+              </svg>
+            </button>
+          </>
         )}
       </div>
     </div>
   )
 }
 
-function labelFor(state: PillState): string {
-  switch (state) {
-    case 'idle': return 'Detectado'
-    case 'recording': return 'Gravando'
-    case 'transcribing': return 'Transcrevendo'
-    case 'saving': return 'Salvando'
-  }
-}
+const BAR_COUNT = 28
 
-function StatusDot({ state }: { state: PillState }): ReactElement {
-  const color =
-    state === 'recording' ? 'bg-red-500' :
-    state === 'transcribing' ? 'bg-amber-400' :
-    state === 'saving' ? 'bg-emerald-400' :
-    'bg-sky-400'
-  const anim = state === 'recording' ? 'animate-pulse-rec' : ''
-  return <span className={`w-2.5 h-2.5 rounded-full ${color} ${anim}`} />
+function ListenBars({ stream }: { stream: MediaStream | null }): ReactElement {
+  const barRefs = useRef<Array<HTMLSpanElement | null>>([])
+
+  useEffect(() => {
+    if (!stream) return
+    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+    const ctx = new AudioCtx()
+    const source = ctx.createMediaStreamSource(stream)
+    const analyser = ctx.createAnalyser()
+    analyser.fftSize = 128
+    analyser.smoothingTimeConstant = 0.7
+    source.connect(analyser)
+
+    const buffer = new Uint8Array(analyser.frequencyBinCount)
+    let raf = 0
+    const tick = (): void => {
+      analyser.getByteFrequencyData(buffer)
+      const usable = Math.floor(buffer.length * 0.75)
+      const step = Math.max(1, Math.floor(usable / BAR_COUNT))
+      for (let i = 0; i < BAR_COUNT; i++) {
+        let sum = 0
+        for (let j = 0; j < step; j++) sum += buffer[i * step + j] ?? 0
+        const avg = sum / step / 255
+        const scale = Math.max(0.08, Math.min(1, avg * 1.8))
+        const el = barRefs.current[i]
+        if (el) el.style.transform = `scaleY(${scale})`
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+
+    return () => {
+      cancelAnimationFrame(raf)
+      source.disconnect()
+      analyser.disconnect()
+      void ctx.close()
+    }
+  }, [stream])
+
+  return (
+    <div className="flex items-center gap-[2px] h-7" aria-hidden>
+      {Array.from({ length: BAR_COUNT }).map((_, i) => (
+        <span
+          key={i}
+          ref={(el) => { barRefs.current[i] = el }}
+          className="w-[2px] h-full bg-white rounded-full origin-center transition-transform duration-75"
+          style={{ transform: 'scaleY(0.08)' }}
+        />
+      ))}
+    </div>
+  )
 }

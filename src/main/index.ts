@@ -53,7 +53,7 @@ function openDashboard(): void {
 function createPillWindow(): void {
   if (pillWindow && !pillWindow.isDestroyed()) return
 
-  const pillWidth = 260
+  const pillWidth = 380
   const pillHeight = 64
   const { workArea } = screen.getPrimaryDisplay()
   pillWindow = new BrowserWindow({
@@ -123,8 +123,12 @@ function startManualRecording(): void {
 
 function createTray(): void {
   if (tray) return
-  tray = new Tray(nativeImage.createEmpty())
-  tray.setTitle('● MN')
+  const iconPath = app.isPackaged
+    ? join(process.resourcesPath, 'trayTemplate.png')
+    : join(__dirname, '../../resources/trayTemplate.png')
+  const icon = nativeImage.createFromPath(iconPath)
+  icon.setTemplateImage(true)
+  tray = new Tray(icon)
   tray.setToolTip('MeetNotes')
   const rebuildMenu = (): void => {
     const menu = Menu.buildFromTemplate([

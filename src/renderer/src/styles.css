@@ -2,10 +2,16 @@
 
 @theme {
   --animate-pulse-rec: pulse-rec 1.2s ease-in-out infinite;
+  --animate-listen-bar: listen-bar 0.9s ease-in-out infinite;
 
   @keyframes pulse-rec {
     0%, 100% { opacity: 1; transform: scale(1); }
     50%      { opacity: 0.4; transform: scale(0.85); }
+  }
+
+  @keyframes listen-bar {
+    0%, 100% { transform: scaleY(0.35); }
+    50%      { transform: scaleY(1); }
   }
 }
 

@@ -134,12 +134,6 @@ export function Dashboard(): ReactElement {
           )}
           {filtered.map((m) => {
             const status = m.status ?? 'ready'
-            const preview =
-              status === 'processing'
-                ? 'Processando transcrição…'
-                : status === 'failed'
-                  ? 'Falha ao processar'
-                  : m.summary.replace(/[#*_`]/g, '').slice(0, 120)
             return (
               <div
                 key={m.id}
@@ -182,7 +176,6 @@ export function Dashboard(): ReactElement {
                 <div className="text-xs text-slate-500 mt-1">
                   {new Date(m.created_at).toLocaleString()}
                 </div>
-                <div className="text-xs text-slate-600 mt-1 line-clamp-2">{preview}</div>
               </div>
             )
           })}

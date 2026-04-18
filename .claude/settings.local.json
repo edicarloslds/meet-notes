@@ -10,7 +10,9 @@
       "Bash(pnpm build *)",
       "Bash(timeout 25 pnpm dev)",
       "Bash(node install.js)",
-      "Bash(pnpm exec *)"
+      "Bash(pnpm exec *)",
+      "Bash(pnpm add *)",
+      "Bash(node scripts/build-icons.mjs)"
     ]
   }
 }
