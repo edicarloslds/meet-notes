@@ -115,7 +115,6 @@ export const IpcChannels = {
   ListMeetings: 'meeting:list',
   SyncPending: 'meeting:sync-pending',
   SimulateMeeting: 'meeting:simulate',
-  StartManualRecording: 'meeting:start-manual',
   DeleteMeeting: 'meeting:delete',
   RegenerateSummary: 'meeting:regenerate-summary',
   ProcessAndSave: 'audio:process-and-save',
