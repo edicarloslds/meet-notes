@@ -16,7 +16,7 @@ function getStore(): Promise<SettingsStore> {
   storePromise = (async () => {
     const { default: Store } = await import('electron-store')
     return new Store<SettingsSchema>({
-      name: 'meetnotes-settings',
+      name: 'distill-settings',
       defaults: { settings: {} }
     }) as unknown as SettingsStore
   })()

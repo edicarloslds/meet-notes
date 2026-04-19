@@ -86,6 +86,6 @@ const api = {
   }
 }
 
-contextBridge.exposeInMainWorld('meetnotes', api)
+contextBridge.exposeInMainWorld('distill', api)
 
-export type MeetNotesAPI = typeof api
+export type DistillAPI = typeof api

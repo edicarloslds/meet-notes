@@ -100,7 +100,7 @@ export function startMeetingWatcher(cb: Callbacks): void {
         if (/accessibility/i.test(msg)) {
           console.warn(
             '[meetingWatcher] macOS Accessibility permission required. ' +
-              'Grant it in System Settings › Privacy & Security › Accessibility for Electron/MeetNotes.'
+              'Grant it in System Settings › Privacy & Security › Accessibility for Electron/Distill.'
           )
         } else {
           console.warn('[meetingWatcher] poll failed:', msg)

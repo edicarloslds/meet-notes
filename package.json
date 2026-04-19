@@ -1,7 +1,7 @@
 {
-  "name": "meet-notes",
+  "name": "distill",
   "version": "0.1.0",
-  "description": "MeetNotes - AI-powered meeting notes for macOS",
+  "description": "Distill - AI-powered meeting notes for macOS",
   "main": "./out/main/index.js",
   "author": "Edicarlos Lopes",
   "license": "MIT",
@@ -15,8 +15,8 @@
     "package": "electron-vite build && electron-builder --mac"
   },
   "build": {
-    "appId": "com.edicarlos.meetnotes",
-    "productName": "MeetNotes",
+    "appId": "com.edicarlos.distill",
+    "productName": "Distill",
     "directories": {
       "buildResources": "resources"
     },
@@ -46,9 +46,9 @@
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "O MeetNotes captura áudio para gerar transcrições e resumos de reuniões.",
-        "NSAppleEventsUsageDescription": "O MeetNotes detecta janelas de reuniões ativas para iniciar gravação automaticamente.",
-        "NSSystemAdministrationUsageDescription": "O MeetNotes identifica quando um app de reunião está em foco."
+        "NSMicrophoneUsageDescription": "O Distill captura áudio para gerar transcrições e resumos de reuniões.",
+        "NSAppleEventsUsageDescription": "O Distill detecta janelas de reuniões ativas para iniciar gravação automaticamente.",
+        "NSSystemAdministrationUsageDescription": "O Distill identifica quando um app de reunião está em foco."
       }
     },
     "win": {

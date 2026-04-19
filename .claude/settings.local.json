@@ -30,7 +30,11 @@
       "Bash(swiftc -O -o resources/bin/meetnotes-speech scripts/speech-bridge/main.swift)",
       "Bash(say -o /tmp/speech-test.aiff \"teste de reconhecimento de voz do meetnotes\")",
       "Bash(ffmpeg -y -i /tmp/speech-test.aiff -ar 16000 -ac 1 -c:a pcm_s16le /tmp/speech-test.wav)",
-      "Bash(./resources/bin/meetnotes-speech /tmp/speech-test.wav pt-BR)"
+      "Bash(./resources/bin/meetnotes-speech /tmp/speech-test.wav pt-BR)",
+      "Bash(unzip *)",
+      "Read(//private/tmp/**)",
+      "Bash(rm -rf distill-icons)",
+      "Bash(sips *)"
     ]
   }
 }

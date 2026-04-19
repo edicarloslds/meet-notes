@@ -1,4 +1,4 @@
-# MeetNotes
+# Distill
 
 Desktop app (macOS) que detecta reuniões do Microsoft Teams, grava o áudio, transcreve localmente com whisper.cpp, resume via Ollama e persiste no Supabase — com fallback offline.
 
@@ -82,7 +82,7 @@ src/
     aiService.ts        # whisper.cpp (ffmpeg + whisper-cli) + Ollama (JSON mode)
     storageService.ts   # Supabase + electron-store (fila offline)
   preload/
-    index.ts            # contextBridge → window.meetnotes
+    index.ts            # contextBridge → window.distill
   renderer/
     pill.html           # BrowserWindow da pílula flutuante
     dashboard.html      # BrowserWindow principal

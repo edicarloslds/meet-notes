@@ -1,8 +1,8 @@
-import type { MeetNotesAPI } from '../../preload'
+import type { DistillAPI } from '../../preload'
 
 declare global {
   interface Window {
-    meetnotes: MeetNotesAPI
+    distill: DistillAPI
   }
 }
 

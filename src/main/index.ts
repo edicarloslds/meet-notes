@@ -169,10 +169,10 @@ function createTray(): void {
   const icon = nativeImage.createFromPath(iconPath)
   icon.setTemplateImage(true)
   tray = new Tray(icon)
-  tray.setToolTip('MeetNotes')
+  tray.setToolTip('Distill')
   const rebuildMenu = (): void => {
     const menu = Menu.buildFromTemplate([
-      { label: 'Abrir MeetNotes', click: () => openDashboard() },
+      { label: 'Abrir Distill', click: () => openDashboard() },
       { label: 'Iniciar gravação', accelerator: 'CommandOrControl+Shift+R', click: () => startManualRecording() },
       { type: 'separator' },
       { label: 'Sair', click: () => { isQuitting = true; app.quit() } }
@@ -317,7 +317,7 @@ app.whenReady().then(async () => {
   ipcMain.handle(IpcChannels.SimulateMeeting, async (_e, title?: string) => {
     handleDetected({
       title: title?.trim() || 'Reunião de teste',
-      appName: 'MeetNotes (simulado)',
+      appName: 'Distill (simulado)',
       detectedAt: new Date().toISOString()
     })
   })

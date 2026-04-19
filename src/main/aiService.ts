@@ -392,7 +392,7 @@ export async function transcribeAndSummarize(
   await assertWhisperReady()
   await assertOllamaReady()
 
-  const dir = await mkdtemp(join(tmpdir(), 'meetnotes-'))
+  const dir = await mkdtemp(join(tmpdir(), 'distill-'))
   let wavPath: string
   const stageErr = (stage: StageName, err: unknown): void => {
     const msg = isAbortError(err) ? 'Cancelado' : (err as Error).message

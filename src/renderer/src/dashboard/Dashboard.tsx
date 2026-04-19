@@ -32,7 +32,7 @@ export function Dashboard(): ReactElement {
   const tickIntervalRef = useRef<number | null>(null)
 
   const refresh = async (): Promise<void> => {
-    const list = await window.meetnotes.listMeetings()
+    const list = await window.distill.listMeetings()
     setMeetings(list)
     setSelectedId((cur) => cur ?? (list[0]?.id ?? null))
   }
@@ -40,8 +40,8 @@ export function Dashboard(): ReactElement {
   const refreshStatuses = async (): Promise<void> => {
     try {
       const [w, o] = await Promise.all([
-        window.meetnotes.getWhisperStatus(),
-        window.meetnotes.getOllamaStatus()
+        window.distill.getWhisperStatus(),
+        window.distill.getOllamaStatus()
       ])
       setWhisperStatus(w)
       setOllamaStatus(o)
@@ -52,13 +52,13 @@ export function Dashboard(): ReactElement {
 
   useEffect(() => {
     void (async (): Promise<void> => {
-      const s = await window.meetnotes.getSettings()
+      const s = await window.distill.getSettings()
       setShowWelcome(!s.welcomeCompletedAt)
     })()
     void refresh()
     void refreshStatuses()
     const handleOnline = async (): Promise<void> => {
-      const res = await window.meetnotes.syncPending()
+      const res = await window.distill.syncPending()
       if (res.synced > 0) {
         setSyncMsg(`${res.synced} reunião(ões) sincronizada(s)`)
         void refresh()
@@ -66,9 +66,9 @@ export function Dashboard(): ReactElement {
       }
     }
     window.addEventListener('online', handleOnline)
-    const offEnded = window.meetnotes.onMeetingEnded(() => void refresh())
-    const offDetected = window.meetnotes.onMeetingDetected(() => void refresh())
-    const offProgress = window.meetnotes.onMeetingProgress((p) => {
+    const offEnded = window.distill.onMeetingEnded(() => void refresh())
+    const offDetected = window.distill.onMeetingDetected(() => void refresh())
+    const offProgress = window.distill.onMeetingProgress((p) => {
       setProgressByMeeting((prev) => {
         const prior = prev[p.meetingId] ?? {}
         const existing = prior[p.stage]
@@ -166,7 +166,7 @@ export function Dashboard(): ReactElement {
 
   const saveEdit = async (): Promise<void> => {
     if (!selected) return
-    await window.meetnotes.saveMeeting({
+    await window.distill.saveMeeting({
       ...selected,
       title: draftTitle.trim() || selected.title,
       raw_transcript: draftTranscript
@@ -183,7 +183,7 @@ export function Dashboard(): ReactElement {
       setIsEditing(false)
     }
     try {
-      await window.meetnotes.deleteMeeting(m.id)
+      await window.distill.deleteMeeting(m.id)
     } finally {
       await refresh()
     }
@@ -194,10 +194,10 @@ export function Dashboard(): ReactElement {
     setRegenerating(true)
     const startedAt = Date.now()
     try {
-      const { summary, actionItems } = await window.meetnotes.regenerateSummary(
+      const { summary, actionItems } = await window.distill.regenerateSummary(
         selected.raw_transcript
       )
-      await window.meetnotes.saveMeeting({
+      await window.distill.saveMeeting({
         ...selected,
         summary,
         action_items: actionItems,
@@ -226,7 +226,7 @@ export function Dashboard(): ReactElement {
           style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
         >
           <div className="flex items-center justify-between">
-            <h1 className="text-lg font-semibold">MeetNotes</h1>
+            <h1 className="text-lg font-semibold">Distill</h1>
             <button
               type="button"
               aria-label="Configurações"
@@ -303,7 +303,7 @@ export function Dashboard(): ReactElement {
                         type="button"
                         aria-label="Cancelar processamento"
                         title="Cancelar processamento"
-                        onClick={(e) => { e.stopPropagation(); void window.meetnotes.cancelProcessing(m.id) }}
+                        onClick={(e) => { e.stopPropagation(); void window.distill.cancelProcessing(m.id) }}
                         className="p-1 rounded-md text-slate-500 hover:text-red-600 hover:bg-red-50"
                       >
                         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

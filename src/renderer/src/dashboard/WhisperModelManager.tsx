@@ -23,8 +23,8 @@ export function WhisperModelManager({ selectedPath, onSelect, onChanged }: Props
 
   const refresh = async (): Promise<void> => {
     const [models, statuses] = await Promise.all([
-      window.meetnotes.listWhisperModels(),
-      window.meetnotes.getModelStatus()
+      window.distill.listWhisperModels(),
+      window.distill.getModelStatus()
     ])
     const byId = new Map(statuses.map((s) => [s.id, s]))
     setRows((prev) => {
@@ -40,7 +40,7 @@ export function WhisperModelManager({ selectedPath, onSelect, onChanged }: Props
 
   useEffect(() => {
     void refresh()
-    const off = window.meetnotes.onModelProgress((p) => {
+    const off = window.distill.onModelProgress((p) => {
       setRows((prev) =>
         prev.map((r) => (r.info.id === p.id ? { ...r, progress: p } : r))
       )
@@ -61,7 +61,7 @@ export function WhisperModelManager({ selectedPath, onSelect, onChanged }: Props
       )
     )
     try {
-      await window.meetnotes.downloadModel(id)
+      await window.distill.downloadModel(id)
     } catch (err) {
       setRows((prev) =>
         prev.map((r) =>
@@ -83,11 +83,11 @@ export function WhisperModelManager({ selectedPath, onSelect, onChanged }: Props
   }
 
   const handleCancel = async (id: string): Promise<void> => {
-    await window.meetnotes.cancelModelDownload(id)
+    await window.distill.cancelModelDownload(id)
   }
 
   const handleDelete = async (id: string, path?: string): Promise<void> => {
-    await window.meetnotes.deleteModel(id)
+    await window.distill.deleteModel(id)
     if (path && path === selectedPath) onSelect(undefined)
     await refresh()
     onChanged?.()

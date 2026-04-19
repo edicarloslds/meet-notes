@@ -21,7 +21,7 @@ export function Pill(): ReactElement {
   }, [pending])
 
   useEffect(() => {
-    const off = window.meetnotes.onMeetingDetected((p) => {
+    const off = window.distill.onMeetingDetected((p) => {
       if (p?.title) setTitle(p.title)
     })
     return off
@@ -62,13 +62,13 @@ export function Pill(): ReactElement {
     if (isRecording) {
       try { await stop() } catch { /* ignore */ }
     }
-    window.meetnotes.closePill()
+    window.distill.closePill()
   }
 
   const handleStop = async (): Promise<void> => {
     if (pending) return
     if (!isRecording) {
-      window.meetnotes.closePill()
+      window.distill.closePill()
       return
     }
     setPending('stop')
@@ -84,16 +84,16 @@ export function Pill(): ReactElement {
     }
     try {
       const blob = await stop()
-      await window.meetnotes.saveMeeting(placeholder)
+      await window.distill.saveMeeting(placeholder)
       const arrayBuffer = await blob.arrayBuffer()
-      window.meetnotes.processAndSave(placeholder, arrayBuffer)
+      window.distill.processAndSave(placeholder, arrayBuffer)
     } catch (err) {
       console.error('Stop pipeline failed:', err)
       try {
-        await window.meetnotes.saveMeeting({ ...placeholder, status: 'failed' })
+        await window.distill.saveMeeting({ ...placeholder, status: 'failed' })
       } catch { /* ignore */ }
     } finally {
-      window.meetnotes.closePill()
+      window.distill.closePill()
     }
   }
 

@@ -20,7 +20,7 @@ function getStore(): Promise<StoreInstance> {
   storePromise = (async () => {
     const { default: Store } = await import('electron-store')
     return new Store<StoreSchema>({
-      name: 'meetnotes',
+      name: 'distill',
       defaults: { meetings: [], pending: [], deleted: [] }
     }) as unknown as StoreInstance
   })()

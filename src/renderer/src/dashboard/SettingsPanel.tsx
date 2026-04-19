@@ -18,8 +18,8 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): ReactElemen
     setRechecking(true)
     try {
       const [w, o] = await Promise.all([
-        window.meetnotes.getWhisperStatus(),
-        window.meetnotes.getOllamaStatus()
+        window.distill.getWhisperStatus(),
+        window.distill.getOllamaStatus()
       ])
       setWhisperStatus(w)
       setOllamaStatus(o)
@@ -30,7 +30,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): ReactElemen
 
   useEffect(() => {
     void (async () => {
-      const current = await window.meetnotes.getSettings()
+      const current = await window.distill.getSettings()
       setValues(current)
       await refreshStatuses()
       setLoading(false)
@@ -44,7 +44,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): ReactElemen
   const handleSave = async (): Promise<void> => {
     setSaving(true)
     try {
-      const saved = await window.meetnotes.saveSettings(values)
+      const saved = await window.distill.saveSettings(values)
       setValues(saved)
       setSavedMsg('Configurações salvas')
       setTimeout(() => setSavedMsg(null), 2500)

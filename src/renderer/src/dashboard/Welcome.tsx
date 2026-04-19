@@ -17,7 +17,7 @@ const STEPS: Step[] = [
   {
     id: 'microphone',
     title: 'Microfone',
-    description: 'Permite que o MeetNotes capture o áudio das suas reuniões.',
+    description: 'Permite que o Distill capture o áudio das suas reuniões.',
     why: 'Sem esta permissão, nenhuma gravação será possível.',
     required: true
   },
@@ -47,15 +47,15 @@ export function Welcome({ onComplete }: Props): ReactElement {
   const [saving, setSaving] = useState(false)
 
   const handleOpen = async (section: SystemSettingsSection): Promise<void> => {
-    await window.meetnotes.openSystemSettings(section)
+    await window.distill.openSystemSettings(section)
     setChecked((prev) => ({ ...prev, [section]: true }))
   }
 
   const handleFinish = async (): Promise<void> => {
     setSaving(true)
     try {
-      const current = await window.meetnotes.getSettings()
-      await window.meetnotes.saveSettings({
+      const current = await window.distill.getSettings()
+      await window.distill.saveSettings({
         ...current,
         welcomeCompletedAt: new Date().toISOString()
       })
@@ -79,10 +79,10 @@ export function Welcome({ onComplete }: Props): ReactElement {
               <line x1="8" y1="23" x2="16" y2="23" />
             </svg>
           </div>
-          <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Bem-vindo ao MeetNotes</h1>
+          <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Bem-vindo ao Distill</h1>
           <p className="mt-3 text-slate-600 leading-relaxed">
             Antes de começar, o macOS precisa conceder algumas permissões. Clique nos botões abaixo para abrir
-            cada painel de privacidade e ative o MeetNotes manualmente.
+            cada painel de privacidade e ative o Distill manualmente.
           </p>
         </div>
 
@@ -153,7 +153,7 @@ export function Welcome({ onComplete }: Props): ReactElement {
 
         <div className="mt-8 rounded-lg bg-slate-50 border border-slate-200 px-4 py-3 text-xs text-slate-600 leading-relaxed">
           <strong className="text-slate-700">Dica:</strong> após ativar cada permissão, o macOS pode pedir para
-          reiniciar o MeetNotes para aplicar as mudanças. Você também pode gerenciar essas permissões depois em
+          reiniciar o Distill para aplicar as mudanças. Você também pode gerenciar essas permissões depois em
           <em> Configurações do Sistema → Privacidade e Segurança</em>.
         </div>
 
