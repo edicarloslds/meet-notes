@@ -41,8 +41,14 @@
     "mac": {
       "icon": "resources/icon.icns",
       "category": "public.app-category.productivity",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "O MeetNotes captura áudio para gerar transcrições e resumos de reuniões."
+        "NSMicrophoneUsageDescription": "O MeetNotes captura áudio para gerar transcrições e resumos de reuniões.",
+        "NSAppleEventsUsageDescription": "O MeetNotes detecta janelas de reuniões ativas para iniciar gravação automaticamente.",
+        "NSSystemAdministrationUsageDescription": "O MeetNotes identifica quando um app de reunião está em foco."
       }
     },
     "win": {

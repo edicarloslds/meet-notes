@@ -111,7 +111,7 @@ export function Pill(): ReactElement {
             <button
               onClick={() => void handleCancel()}
               title="Cancelar"
-              className="shrink-0 w-8 h-8 flex items-center justify-center rounded-full text-white/70 hover:text-white hover:bg-white/10 transition"
+              className="shrink-0 w-8 h-8 flex items-center justify-center rounded-full text-white/70 hover:text-white hover:bg-white/10 transition cursor-pointer"
             >
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                 <path d="M6 6l12 12M18 6L6 18" />
@@ -127,7 +127,7 @@ export function Pill(): ReactElement {
               onClick={() => void handleStop()}
               disabled={pending !== null}
               title="Parar gravação"
-              className="shrink-0 h-8 px-3 flex items-center gap-1.5 rounded-full bg-red-500 hover:bg-red-400 disabled:opacity-70 disabled:cursor-wait text-white text-xs font-medium transition"
+              className="shrink-0 h-8 px-3 flex items-center gap-1.5 rounded-full bg-red-500 hover:bg-red-400 disabled:opacity-70 disabled:cursor-wait text-white text-xs font-medium transition cursor-pointer"
             >
               {pending === 'stop' && showSpinner ? (
                 <Spinner />
@@ -139,7 +139,17 @@ export function Pill(): ReactElement {
           </>
         ) : (
           <>
-            <div className="flex-1 flex flex-col min-w-0 pl-2">
+            <button
+              onClick={() => void handleCancel()}
+              title="Fechar"
+              className="shrink-0 w-8 h-8 flex items-center justify-center rounded-full text-white/60 hover:text-white hover:bg-white/10 transition cursor-pointer"
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <path d="M6 6l12 12M18 6L6 18" />
+              </svg>
+            </button>
+
+            <div className="flex-1 flex flex-col min-w-0">
               <span className="text-[10px] uppercase tracking-wider text-white/50">
                 {errorMsg ? 'Erro' : 'Reunião'}
               </span>
@@ -151,7 +161,7 @@ export function Pill(): ReactElement {
             <button
               onClick={() => void handleStart()}
               disabled={pending !== null}
-              className="shrink-0 h-8 px-3 flex items-center gap-1.5 rounded-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-70 disabled:cursor-wait text-white text-xs font-medium transition"
+              className="shrink-0 h-8 px-3 flex items-center gap-1.5 rounded-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-70 disabled:cursor-wait text-white text-xs font-medium transition cursor-pointer"
             >
               {pending === 'start' && showSpinner ? (
                 <Spinner />
@@ -159,16 +169,6 @@ export function Pill(): ReactElement {
                 <span className="w-2 h-2 rounded-full bg-white" />
               )}
               Iniciar
-            </button>
-
-            <button
-              onClick={() => void handleCancel()}
-              title="Fechar"
-              className="shrink-0 w-7 h-7 flex items-center justify-center rounded-full text-white/60 hover:text-white hover:bg-white/10 transition"
-            >
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                <path d="M6 6l12 12M18 6L6 18" />
-              </svg>
             </button>
           </>
         )}

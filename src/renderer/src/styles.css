@@ -30,6 +30,14 @@ body {
   background: #f8fafc;
 }
 
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]),
+label[for],
+summary,
+select:not(:disabled) {
+  cursor: pointer;
+}
+
 .markdown-body {
   color: #334155;
   font-size: 15px;

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, shell, Tray } from 'electron'
+import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, screen, shell, Tray } from 'electron'
 import { join } from 'path'
 import {
   AppSettings,
@@ -8,7 +8,8 @@ import {
   MeetingProgressEvent,
   ProcessAudioResult,
   StageName,
-  StageStatus
+  StageStatus,
+  SystemSettingsSection
 } from '../shared/types'
 import { startMeetingWatcher, stopMeetingWatcher } from './meetingWatcher'
 import { getOllamaStatus, getWhisperStatus, isAbortError, transcribeAndSummarize, summarizeTranscript } from './aiService'
@@ -172,7 +173,7 @@ function createTray(): void {
   const rebuildMenu = (): void => {
     const menu = Menu.buildFromTemplate([
       { label: 'Abrir MeetNotes', click: () => openDashboard() },
-      { label: 'Iniciar gravação', click: () => startManualRecording() },
+      { label: 'Iniciar gravação', accelerator: 'CommandOrControl+Shift+R', click: () => startManualRecording() },
       { type: 'separator' },
       { label: 'Sair', click: () => { isQuitting = true; app.quit() } }
     ])
@@ -185,6 +186,11 @@ app.whenReady().then(async () => {
   await primeSettingsCache()
   createTray()
   createDashboardWindow()
+
+  const recordingShortcut = 'CommandOrControl+Shift+R'
+  if (!globalShortcut.register(recordingShortcut, () => startManualRecording())) {
+    console.warn(`Falha ao registrar atalho ${recordingShortcut}`)
+  }
 
   startMeetingWatcher({ onDetected: handleDetected, onEnded: handleEnded })
 
@@ -299,6 +305,15 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle(IpcChannels.GetWhisperStatus, async () => getWhisperStatus())
   ipcMain.handle(IpcChannels.GetOllamaStatus, async () => getOllamaStatus())
+  ipcMain.handle(IpcChannels.OpenSystemSettings, async (_e, section: SystemSettingsSection) => {
+    const urls: Record<SystemSettingsSection, string> = {
+      microphone: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone',
+      'screen-recording': 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
+      accessibility: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility'
+    }
+    const url = urls[section]
+    if (url) await shell.openExternal(url)
+  })
   ipcMain.handle(IpcChannels.SimulateMeeting, async (_e, title?: string) => {
     handleDetected({
       title: title?.trim() || 'Reunião de teste',
@@ -313,6 +328,7 @@ app.whenReady().then(async () => {
 app.on('before-quit', () => {
   isQuitting = true
   stopMeetingWatcher()
+  globalShortcut.unregisterAll()
 })
 
 app.on('window-all-closed', () => {

@@ -9,6 +9,7 @@ import {
   ModelDownloadProgress,
   OllamaStatus,
   ProcessAudioResult,
+  SystemSettingsSection,
   WhisperModelInfo,
   WhisperModelStatus,
   WhisperStatus
@@ -74,6 +75,8 @@ const api = {
     ipcRenderer.invoke(IpcChannels.GetWhisperStatus),
   getOllamaStatus: (): Promise<OllamaStatus> =>
     ipcRenderer.invoke(IpcChannels.GetOllamaStatus),
+  openSystemSettings: (section: SystemSettingsSection): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.OpenSystemSettings, section),
   onModelProgress: (cb: (p: ModelDownloadProgress) => void): (() => void) => {
     const listener = (_: unknown, payload: ModelDownloadProgress): void => cb(payload)
     ipcRenderer.on(IpcChannels.ModelProgress, listener)

@@ -30,7 +30,8 @@ export const SETTINGS_KEYS = [
   'whisperModel',
   'whisperLanguage',
   'supabaseUrl',
-  'supabaseAnonKey'
+  'supabaseAnonKey',
+  'welcomeCompletedAt'
 ] as const
 
 export type SettingKey = (typeof SETTINGS_KEYS)[number]

@@ -85,7 +85,10 @@ export interface AppSettings {
   whisperLanguage?: string
   supabaseUrl?: string
   supabaseAnonKey?: string
+  welcomeCompletedAt?: string
 }
+
+export type SystemSettingsSection = 'microphone' | 'screen-recording' | 'accessibility'
 
 export interface WhisperStatus {
   binAvailable: boolean
@@ -112,6 +115,7 @@ export const IpcChannels = {
   ListMeetings: 'meeting:list',
   SyncPending: 'meeting:sync-pending',
   SimulateMeeting: 'meeting:simulate',
+  StartManualRecording: 'meeting:start-manual',
   DeleteMeeting: 'meeting:delete',
   RegenerateSummary: 'meeting:regenerate-summary',
   ProcessAndSave: 'audio:process-and-save',
@@ -126,5 +130,6 @@ export const IpcChannels = {
   DeleteModel: 'models:delete',
   ModelProgress: 'models:progress',
   GetWhisperStatus: 'whisper:status',
-  GetOllamaStatus: 'ollama:status'
+  GetOllamaStatus: 'ollama:status',
+  OpenSystemSettings: 'system:open-settings'
 } as const

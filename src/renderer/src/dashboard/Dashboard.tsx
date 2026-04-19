@@ -9,6 +9,7 @@ import {
 } from '../../../shared/types'
 import { SettingsPanel } from './SettingsPanel'
 import { ProcessingTimeline, type TimelineState } from './ProcessingTimeline'
+import { Welcome } from './Welcome'
 
 export function Dashboard(): ReactElement {
   const [meetings, setMeetings] = useState<Meeting[]>([])
@@ -25,6 +26,7 @@ export function Dashboard(): ReactElement {
   const [showSettings, setShowSettings] = useState(false)
   const [whisperStatus, setWhisperStatus] = useState<WhisperStatus | null>(null)
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null)
+  const [showWelcome, setShowWelcome] = useState<boolean | null>(null)
   const [progressByMeeting, setProgressByMeeting] = useState<Record<string, TimelineState>>({})
   const [tickNow, setTickNow] = useState(() => Date.now())
   const tickIntervalRef = useRef<number | null>(null)
@@ -49,6 +51,10 @@ export function Dashboard(): ReactElement {
   }
 
   useEffect(() => {
+    void (async (): Promise<void> => {
+      const s = await window.meetnotes.getSettings()
+      setShowWelcome(!s.welcomeCompletedAt)
+    })()
     void refresh()
     void refreshStatuses()
     const handleOnline = async (): Promise<void> => {
@@ -60,9 +66,6 @@ export function Dashboard(): ReactElement {
       }
     }
     window.addEventListener('online', handleOnline)
-    const closePending = (): void => setPendingDeleteId(null)
-    window.addEventListener('click', closePending)
-    window.addEventListener('scroll', closePending, true)
     const offEnded = window.meetnotes.onMeetingEnded(() => void refresh())
     const offDetected = window.meetnotes.onMeetingDetected(() => void refresh())
     const offProgress = window.meetnotes.onMeetingProgress((p) => {
@@ -87,14 +90,26 @@ export function Dashboard(): ReactElement {
     const interval = window.setInterval(() => void refresh(), 5000)
     return () => {
       window.removeEventListener('online', handleOnline)
-      window.removeEventListener('click', closePending)
-      window.removeEventListener('scroll', closePending, true)
       offEnded()
       offDetected()
       offProgress()
       window.clearInterval(interval)
     }
   }, [])
+
+  useEffect(() => {
+    if (!pendingDeleteId) return
+    const close = (): void => setPendingDeleteId(null)
+    const t = window.setTimeout(() => {
+      window.addEventListener('click', close)
+      window.addEventListener('scroll', close, true)
+    }, 0)
+    return () => {
+      window.clearTimeout(t)
+      window.removeEventListener('click', close)
+      window.removeEventListener('scroll', close, true)
+    }
+  }, [pendingDeleteId])
 
   useEffect(() => {
     const hasActive = Object.values(progressByMeeting).some((s) =>
@@ -161,13 +176,17 @@ export function Dashboard(): ReactElement {
   }
 
   const confirmDelete = async (m: Meeting): Promise<void> => {
-    await window.meetnotes.deleteMeeting(m.id)
+    setMeetings((prev) => prev.filter((it) => it.id !== m.id))
     setPendingDeleteId(null)
     if (selectedId === m.id) {
       setSelectedId(null)
       setIsEditing(false)
     }
-    await refresh()
+    try {
+      await window.meetnotes.deleteMeeting(m.id)
+    } finally {
+      await refresh()
+    }
   }
 
   const handleRegenerate = async (): Promise<void> => {
@@ -189,6 +208,14 @@ export function Dashboard(): ReactElement {
     } finally {
       setRegenerating(false)
     }
+  }
+
+  if (showWelcome === null) {
+    return <div className="h-full w-full" />
+  }
+
+  if (showWelcome) {
+    return <Welcome onComplete={() => setShowWelcome(false)} />
   }
 
   return (
