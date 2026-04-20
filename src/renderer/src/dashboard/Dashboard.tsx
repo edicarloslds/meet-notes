@@ -463,10 +463,7 @@ export function Dashboard(): ReactElement {
 
             {selectedStatus === 'processing' && !isEditing && (
               <div className="py-6">
-                <div className="flex items-center gap-3 mb-6">
-                  <div className="w-5 h-5 border-2 border-sky-200 border-t-sky-500 rounded-full animate-spin" />
-                  <div className="text-sm font-medium text-slate-700">Processando reunião…</div>
-                </div>
+                <div className="text-sm font-medium text-slate-700 mb-6">Processando reunião…</div>
                 <ProcessingTimeline
                   state={progressByMeeting[selected.id] ?? {}}
                   now={tickNow}
@@ -721,3 +718,4 @@ function splitTranscript(text: string): string[] {
   }
   return chunks
 }
+

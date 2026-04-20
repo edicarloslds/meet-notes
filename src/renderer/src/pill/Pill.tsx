@@ -60,7 +60,7 @@ export function Pill(): ReactElement {
 
   const handleCancel = async (): Promise<void> => {
     if (isRecording) {
-      try { await stop() } catch { /* ignore */ }
+      try { await stop() } catch { /* ignore discarded audio */ }
     }
     window.distill.closePill()
   }
@@ -153,7 +153,9 @@ export function Pill(): ReactElement {
               <span className="text-[10px] uppercase tracking-wider text-white/50">
                 {errorMsg ? 'Erro' : 'Reunião'}
               </span>
-              <span className={`text-xs truncate ${errorMsg ? 'text-red-300' : 'text-white/85'}`}>
+              <span
+                className={`text-xs truncate ${errorMsg ? 'text-red-300' : 'text-white/85'}`}
+              >
                 {errorMsg ?? title}
               </span>
             </div>

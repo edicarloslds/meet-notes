@@ -34,7 +34,14 @@
       "Bash(unzip *)",
       "Read(//private/tmp/**)",
       "Bash(rm -rf distill-icons)",
-      "Bash(sips *)"
+      "Bash(sips *)",
+      "Bash(whisper-cli -h)",
+      "Bash(node *)",
+      "Bash(ffmpeg -f lavfi -i \"sine=frequency=440:duration=2\" -ac 2 -ar 16000 /tmp/test_stereo.wav -y)",
+      "Bash(whisper-cli -m ~/.cache/distill/models/ggml-tiny.bin -f /tmp/test_stereo.wav -l en -di -oj -of /tmp/test_out -nt)",
+      "Read(//tmp/**)",
+      "Bash(rm -f /tmp/test_stereo.wav /tmp/test_out.json)",
+      "Bash(npm run *)"
     ]
   }
 }

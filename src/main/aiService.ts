@@ -205,7 +205,11 @@ async function convertToWav(
   return wavPath
 }
 
-async function runWhisperOnWav(wavPath: string, dir: string, signal?: AbortSignal): Promise<string> {
+async function runWhisperOnWav(
+  wavPath: string,
+  dir: string,
+  signal?: AbortSignal
+): Promise<string> {
   const whisperModel = getSettingSync('whisperModel')
   if (!whisperModel) {
     throw new Error(`${WHISPER_NOT_READY_MARKER} Nenhum modelo do Whisper configurado. Abra Configurações e baixe um modelo.`)
@@ -215,10 +219,11 @@ async function runWhisperOnWav(wavPath: string, dir: string, signal?: AbortSigna
   }
   const whisperBin = resolveWhisperBin()
   const whisperLanguage = getSettingSync('whisperLanguage') || WHISPER_LANGUAGE_DEFAULT
+  const outBase = join(dir, 'out')
   try {
     await run(
       whisperBin,
-      ['-m', whisperModel, '-f', wavPath, '-l', whisperLanguage, '-otxt', '-of', join(dir, 'out'), '-nt'],
+      ['-m', whisperModel, '-f', wavPath, '-l', whisperLanguage, '-otxt', '-of', outBase, '-nt'],
       signal
     )
   } catch (err) {
@@ -229,7 +234,7 @@ async function runWhisperOnWav(wavPath: string, dir: string, signal?: AbortSigna
     }
     throw err
   }
-  const transcript = await readFile(join(dir, 'out.txt'), 'utf8')
+  const transcript = await readFile(`${outBase}.txt`, 'utf8')
   return transcript.trim()
 }
 

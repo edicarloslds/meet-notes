@@ -86,12 +86,15 @@ function createPillWindow(): void {
     height: pillHeight,
     x: workArea.x + Math.round((workArea.width - pillWidth) / 2),
     y: workArea.y + workArea.height - pillHeight - 32,
+    show: false,
     frame: false,
     transparent: true,
     resizable: false,
     alwaysOnTop: true,
     skipTaskbar: true,
     hasShadow: false,
+    focusable: true,
+    acceptFirstMouse: true,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -99,8 +102,9 @@ function createPillWindow(): void {
     }
   })
 
-  pillWindow.setAlwaysOnTop(true, 'floating')
+  pillWindow.setAlwaysOnTop(true, 'screen-saver')
   pillWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  pillWindow.once('ready-to-show', () => pillWindow?.showInactive())
   pillWindow.on('closed', () => {
     pillWindow = null
   })
@@ -184,6 +188,7 @@ function createTray(): void {
 
 app.whenReady().then(async () => {
   await primeSettingsCache()
+
   createTray()
   createDashboardWindow()
 
@@ -202,9 +207,12 @@ app.whenReady().then(async () => {
 
   syncPendingMeetings().catch((err) => console.warn('Sync on boot failed:', err))
 
-  ipcMain.handle(IpcChannels.ProcessAudio, async (_e, audioBuffer: ArrayBuffer): Promise<ProcessAudioResult> => {
-    return transcribeAndSummarize(Buffer.from(audioBuffer))
-  })
+  ipcMain.handle(
+    IpcChannels.ProcessAudio,
+    async (_e, audioBuffer: ArrayBuffer): Promise<ProcessAudioResult> => {
+      return transcribeAndSummarize(Buffer.from(audioBuffer))
+    }
+  )
 
   ipcMain.handle(IpcChannels.SaveMeeting, async (_e, meeting: Meeting) => {
     const saved = await saveMeeting(meeting)

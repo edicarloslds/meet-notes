@@ -14,13 +14,17 @@ export function useAudioRecorder(): {
 
   const start = async (): Promise<void> => {
     chunksRef.current = []
-    const mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-    streamRef.current = mediaStream
-    setStream(mediaStream)
+    const micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+    streamRef.current = micStream
+    setStream(micStream)
+
     const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
       ? 'audio/webm;codecs=opus'
       : 'audio/webm'
-    const recorder = new MediaRecorder(mediaStream, { mimeType: mime })
+    const recorder = new MediaRecorder(micStream, {
+      mimeType: mime,
+      audioBitsPerSecond: 128000
+    })
     recorder.ondataavailable = (e) => {
       if (e.data && e.data.size > 0) chunksRef.current.push(e.data)
     }

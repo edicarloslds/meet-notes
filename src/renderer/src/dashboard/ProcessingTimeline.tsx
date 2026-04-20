@@ -46,23 +46,28 @@ export function ProcessingTimeline({
 
         return (
           <li key={name} className="relative">
-            <span
-              className={`absolute -left-[34px] top-0.5 flex items-center justify-center w-5 h-5 rounded-full border-2 ${dotStyles(status)}`}
-            >
+            <span className="absolute -left-[34px] top-0.5 w-5 h-5">
               {status === 'active' && (
-                <span className="w-2 h-2 rounded-full bg-sky-500 animate-pulse" />
+                <span className="absolute inset-0 rounded-full border-2 border-sky-200 border-t-sky-500 animate-spin" />
               )}
-              {status === 'done' && (
-                <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-600">
-                  <path d="M20 6L9 17l-5-5" />
-                </svg>
-              )}
-              {status === 'failed' && (
-                <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="text-red-600">
-                  <path d="M18 6L6 18" />
-                  <path d="M6 6l12 12" />
-                </svg>
-              )}
+              <span
+                className={`absolute inset-0 flex items-center justify-center rounded-full border-2 ${dotStyles(status)}`}
+              >
+                {status === 'active' && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
+                )}
+                {status === 'done' && (
+                  <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-600">
+                    <path d="M20 6L9 17l-5-5" />
+                  </svg>
+                )}
+                {status === 'failed' && (
+                  <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="text-red-600">
+                    <path d="M18 6L6 18" />
+                    <path d="M6 6l12 12" />
+                  </svg>
+                )}
+              </span>
             </span>
 
             <div className="flex items-start justify-between gap-4">
@@ -89,7 +94,7 @@ export function ProcessingTimeline({
 function dotStyles(status: StageStatus | 'pending'): string {
   switch (status) {
     case 'active':
-      return 'border-sky-500 bg-white'
+      return 'border-transparent bg-transparent'
     case 'done':
       return 'border-emerald-500 bg-white'
     case 'failed':

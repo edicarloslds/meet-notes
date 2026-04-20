@@ -109,18 +109,19 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): ReactElemen
               <label htmlFor="setting-whisperLanguage" className="block text-sm font-medium text-slate-700">
                 Idioma
               </label>
-              <input
+              <select
                 id="setting-whisperLanguage"
-                type="text"
-                value={values.whisperLanguage ?? ''}
+                value={values.whisperLanguage ?? 'pt'}
                 onChange={(e) => update('whisperLanguage', e.target.value)}
-                placeholder="pt"
-                autoComplete="off"
-                spellCheck={false}
                 className={inputClass}
-              />
+              >
+                <option value="auto">Detectar automaticamente</option>
+                <option value="pt">Português</option>
+                <option value="en">Inglês</option>
+                <option value="es">Espanhol</option>
+              </select>
               <p className="text-xs text-slate-500 mt-1.5">
-                Código ISO de 2 letras (ex.: pt, en, es). Use <code className="font-mono bg-slate-100 px-1 rounded">auto</code> para detectar.
+                Idioma usado pelo Whisper para transcrever o áudio.
               </p>
             </div>
             <div className="px-6 py-4">
@@ -150,7 +151,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): ReactElemen
           <div className="divide-y divide-slate-100">
             <div className="px-6 py-4">
               <label htmlFor="setting-ollamaHost" className="block text-sm font-medium text-slate-700">
-                Host
+                Host <span className="font-normal text-slate-400">(opcional)</span>
               </label>
               <input
                 id="setting-ollamaHost"
@@ -162,7 +163,9 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): ReactElemen
                 spellCheck={false}
                 className={inputClass}
               />
-              <p className="text-xs text-slate-500 mt-1.5">URL do servidor Ollama.</p>
+              <p className="text-xs text-slate-500 mt-1.5">
+                Deixe em branco para usar o Ollama local padrão (<code className="font-mono">http://127.0.0.1:11434</code>). Preencha apenas se o servidor estiver em outra máquina ou porta.
+              </p>
             </div>
             <div className="px-6 py-4">
               <label htmlFor="setting-ollamaModel" className="block text-sm font-medium text-slate-700">
