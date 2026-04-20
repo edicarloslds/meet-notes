@@ -31,6 +31,7 @@ export const SETTINGS_KEYS = [
   'whisperLanguage',
   'supabaseUrl',
   'supabaseAnonKey',
+  'disableSupabase',
   'welcomeCompletedAt'
 ] as const
 
@@ -59,7 +60,10 @@ export async function saveSettings(next: AppSettings): Promise<AppSettings> {
   const cleaned: AppSettings = {}
   for (const key of SETTINGS_KEYS) {
     const value = next[key]
-    if (typeof value === 'string' && value.trim()) {
+    if (typeof value === 'boolean') {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(cleaned as any)[key] = value
+    } else if (typeof value === 'string' && value.trim()) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ;(cleaned as any)[key] = value.trim()
     }
@@ -69,9 +73,9 @@ export async function saveSettings(next: AppSettings): Promise<AppSettings> {
   return { ...cleaned }
 }
 
-export function getSettingSync(key: SettingKey): string | undefined {
+export function getSettingSync(key: SettingKey): any {
   const override = cached?.[key]
-  if (override) return override
+  if (override !== undefined) return override
   const envKey = ENV_MAP[key]
   if (!envKey) return undefined
   return (import.meta.env as unknown as Record<string, string | undefined>)[envKey]
@@ -81,8 +85,8 @@ export async function primeSettingsCache(): Promise<void> {
   await loadSettings()
 }
 
-export function getEffectiveSettings(): Record<SettingKey, string | undefined> {
-  const out = {} as Record<SettingKey, string | undefined>
+export function getEffectiveSettings(): Record<SettingKey, any> {
+  const out = {} as Record<SettingKey, any>
   for (const key of SETTINGS_KEYS) out[key] = getSettingSync(key)
   return out
 }

@@ -185,6 +185,32 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): ReactElemen
           </div>
         </section>
 
+        <section className="bg-white border border-slate-200 rounded-lg shadow-sm">
+          <header className="px-6 py-4 border-b border-slate-100">
+            <h3 className="text-sm font-semibold text-slate-800">Armazenamento</h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Onde seus dados são salvos.
+            </p>
+          </header>
+          <div className="divide-y divide-slate-100">
+            <div className="px-6 py-4">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={values.disableSupabase ?? false}
+                  onChange={(e) => update('disableSupabase', e.target.checked)}
+                  className="w-4 h-4 text-sky-600 rounded border-slate-300 focus:ring-sky-500"
+                />
+                <div>
+                  <div className="text-sm font-medium text-slate-700">Salvar apenas localmente</div>
+                  <div className="text-xs text-slate-500 mt-0.5">
+                    Ao marcar esta opção, os dados não serão sincronizados com o Supabase e ficarão apenas no seu computador.
+                  </div>
+                </div>
+              </label>
+            </div>
+          </div>
+        </section>
         <div className="bg-slate-50 border border-slate-200 rounded-lg px-6 py-4 flex items-center justify-end gap-3">
           {savedMsg && <span className="text-xs text-emerald-600">{savedMsg}</span>}
           <button

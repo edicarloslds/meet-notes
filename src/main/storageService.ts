@@ -38,6 +38,12 @@ let supabase: SupabaseClient | null = null
 let supabaseKey: string | null = null
 
 function getSupabase(): SupabaseClient | null {
+  const disableSupabase = getSettingSync('disableSupabase')
+  if (disableSupabase) {
+    supabase = null
+    supabaseKey = null
+    return null
+  }
   const url = getSettingSync('supabaseUrl')
   const key = getSettingSync('supabaseAnonKey')
   if (!url || !key) {

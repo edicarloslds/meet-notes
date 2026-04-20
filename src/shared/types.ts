@@ -95,6 +95,7 @@ export interface AppSettings {
   whisperLanguage?: string
   supabaseUrl?: string
   supabaseAnonKey?: string
+  disableSupabase?: boolean
   welcomeCompletedAt?: string
 }
 
