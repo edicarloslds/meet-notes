@@ -78,10 +78,16 @@ export function Dashboard(): ReactElement {
             status: p.status,
             startedAt:
               p.status === 'active'
-                ? p.at
+                ? existing?.startedAt ?? p.at
                 : existing?.startedAt ?? (p.status === 'done' ? p.at : p.at),
             finishedAt: p.status === 'active' ? undefined : p.at,
-            error: p.error
+            error: p.error,
+            progress:
+              p.status === 'active'
+                ? typeof p.progress === 'number'
+                  ? p.progress
+                  : existing?.progress
+                : undefined
           }
         }
         return { ...prev, [p.meetingId]: next }

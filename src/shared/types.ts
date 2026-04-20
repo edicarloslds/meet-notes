@@ -75,7 +75,17 @@ export interface MeetingProgressEvent {
   status: StageStatus
   at: number
   error?: string
+  progress?: number
 }
+
+export interface PendingMeta {
+  attempts: number
+  nextAttemptAt: number
+  lastError?: string
+}
+
+export const CHUNK_SAMPLE_RATE = 16000
+export const CHUNK_WINDOW_SECONDS = 30
 
 export interface AppSettings {
   ollamaHost?: string
@@ -130,5 +140,9 @@ export const IpcChannels = {
   ModelProgress: 'models:progress',
   GetWhisperStatus: 'whisper:status',
   GetOllamaStatus: 'ollama:status',
-  OpenSystemSettings: 'system:open-settings'
+  OpenSystemSettings: 'system:open-settings',
+  StartMeetingChunks: 'audio:start-chunks',
+  SubmitAudioChunk: 'audio:submit-chunk',
+  FinalizeMeeting: 'audio:finalize-meeting',
+  AbortMeetingChunks: 'audio:abort-chunks'
 } as const

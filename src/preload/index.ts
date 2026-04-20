@@ -42,6 +42,15 @@ const api = {
   processAndSave: (placeholder: Meeting, audio: ArrayBuffer): void => {
     ipcRenderer.send(IpcChannels.ProcessAndSave, placeholder, audio)
   },
+  startMeetingChunks: (meetingId: string): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.StartMeetingChunks, meetingId),
+  submitAudioChunk: (meetingId: string, pcm: ArrayBuffer, sampleRate: number): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.SubmitAudioChunk, meetingId, pcm, sampleRate),
+  abortMeetingChunks: (meetingId: string): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.AbortMeetingChunks, meetingId),
+  finalizeMeeting: (placeholder: Meeting, remaining: ArrayBuffer | null, sampleRate: number): void => {
+    ipcRenderer.send(IpcChannels.FinalizeMeeting, placeholder, remaining, sampleRate)
+  },
   saveMeeting: (meeting: Meeting): Promise<Meeting> =>
     ipcRenderer.invoke(IpcChannels.SaveMeeting, meeting),
   listMeetings: (): Promise<Meeting[]> => ipcRenderer.invoke(IpcChannels.ListMeetings),

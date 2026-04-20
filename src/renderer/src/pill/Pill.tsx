@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState, type ReactElement } from 'react'
-import type { Meeting } from '../../../shared/types'
+import {
+  OLLAMA_NOT_READY_MARKER,
+  WHISPER_NOT_READY_MARKER,
+  type Meeting
+} from '../../../shared/types'
 import { useAudioRecorder } from '../hooks/useAudioRecorder'
 
 export function Pill(): ReactElement {
@@ -9,7 +13,8 @@ export function Pill(): ReactElement {
   const [pending, setPending] = useState<'start' | 'stop' | null>(null)
   const [showSpinner, setShowSpinner] = useState(false)
   const tickRef = useRef<number | null>(null)
-  const { start, stop, isRecording, stream } = useAudioRecorder()
+  const meetingIdRef = useRef<string | null>(null)
+  const { start, stop, sampleRate, isRecording, stream } = useAudioRecorder()
 
   useEffect(() => {
     if (!pending) {
@@ -48,11 +53,20 @@ export function Pill(): ReactElement {
     setErrorMsg(null)
     setPending('start')
     try {
-      await start()
+      const meetingId = crypto.randomUUID()
+      meetingIdRef.current = meetingId
+      await window.distill.startMeetingChunks(meetingId)
+      await start((pcm) => {
+        void window.distill.submitAudioChunk(meetingId, pcm, sampleRate)
+      })
     } catch (err) {
       console.error('Failed to start recording:', err)
       const msg = err instanceof Error ? err.message : String(err)
-      setErrorMsg(/permission|denied|notallowed/i.test(msg) ? 'Permissão negada' : 'Falha ao gravar')
+      if (meetingIdRef.current) {
+        void window.distill.abortMeetingChunks(meetingIdRef.current)
+        meetingIdRef.current = null
+      }
+      setErrorMsg(mapStartError(msg))
     } finally {
       setPending(null)
     }
@@ -61,6 +75,10 @@ export function Pill(): ReactElement {
   const handleCancel = async (): Promise<void> => {
     if (isRecording) {
       try { await stop() } catch { /* ignore discarded audio */ }
+    }
+    if (meetingIdRef.current) {
+      void window.distill.abortMeetingChunks(meetingIdRef.current)
+      meetingIdRef.current = null
     }
     window.distill.closePill()
   }
@@ -72,8 +90,9 @@ export function Pill(): ReactElement {
       return
     }
     setPending('stop')
+    const meetingId = meetingIdRef.current ?? crypto.randomUUID()
     const placeholder: Meeting = {
-      id: crypto.randomUUID(),
+      id: meetingId,
       user_id: null,
       title,
       raw_transcript: '',
@@ -83,18 +102,28 @@ export function Pill(): ReactElement {
       status: 'processing'
     }
     try {
-      const blob = await stop()
-      await window.distill.saveMeeting(placeholder)
-      const arrayBuffer = await blob.arrayBuffer()
-      window.distill.processAndSave(placeholder, arrayBuffer)
+      const remaining = await stop()
+      window.distill.finalizeMeeting(placeholder, remaining, sampleRate)
     } catch (err) {
       console.error('Stop pipeline failed:', err)
+      if (meetingIdRef.current) {
+        void window.distill.abortMeetingChunks(meetingIdRef.current)
+      }
       try {
         await window.distill.saveMeeting({ ...placeholder, status: 'failed' })
       } catch { /* ignore */ }
     } finally {
+      meetingIdRef.current = null
       window.distill.closePill()
     }
+  }
+
+  const mapStartError = (msg: string): string => {
+    if (msg.includes(WHISPER_NOT_READY_MARKER)) return 'Whisper não configurado'
+    if (msg.includes(OLLAMA_NOT_READY_MARKER)) return 'Ollama indisponível'
+    if (/permission|denied|notallowed/i.test(msg)) return 'Permissão negada'
+    const clean = msg.replace(/^Error(?: invoking remote method [^:]+)?:\s*/i, '').trim()
+    return clean.slice(0, 90) || 'Falha ao gravar'
   }
 
   const fmt = (s: number): string => {
@@ -154,6 +183,7 @@ export function Pill(): ReactElement {
                 {errorMsg ? 'Erro' : 'Reunião'}
               </span>
               <span
+                title={errorMsg ?? undefined}
                 className={`text-xs truncate ${errorMsg ? 'text-red-300' : 'text-white/85'}`}
               >
                 {errorMsg ?? title}

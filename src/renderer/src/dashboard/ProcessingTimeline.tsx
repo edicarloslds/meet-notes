@@ -6,6 +6,7 @@ export interface StageState {
   startedAt?: number
   finishedAt?: number
   error?: string
+  progress?: number
 }
 
 export type TimelineState = Partial<Record<StageName, StageState>>
@@ -74,6 +75,17 @@ export function ProcessingTimeline({
               <div className="min-w-0">
                 <div className={`text-sm font-medium ${labelStyles(status)}`}>{label}</div>
                 <div className="text-xs text-slate-500 mt-0.5">{description}</div>
+                {status === 'active' && typeof s?.progress === 'number' && (
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <div className="flex-1 h-1 bg-slate-200 rounded-full overflow-hidden max-w-[180px]">
+                      <div
+                        className="h-full bg-sky-500 transition-all duration-200"
+                        style={{ width: `${Math.min(100, Math.max(0, s.progress))}%` }}
+                      />
+                    </div>
+                    <span className="text-[11px] text-slate-500 tabular-nums">{s.progress}%</span>
+                  </div>
+                )}
                 {s?.error && (
                   <div className="text-xs text-red-600 mt-1 break-words">{s.error}</div>
                 )}

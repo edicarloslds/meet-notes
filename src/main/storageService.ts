@@ -1,10 +1,17 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
-import { Meeting } from '../shared/types'
+import { Meeting, PendingMeta } from '../shared/types'
 import { getSettingSync } from './settingsService'
+
+const BACKOFF_MS = [30_000, 60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000]
+
+function nextBackoff(attempts: number): number {
+  return BACKOFF_MS[Math.min(Math.max(attempts - 1, 0), BACKOFF_MS.length - 1)]
+}
 
 interface StoreSchema {
   meetings: Meeting[]
   pending: Meeting[]
+  pendingMeta: Record<string, PendingMeta>
   deleted: string[]
 }
 
@@ -21,7 +28,7 @@ function getStore(): Promise<StoreInstance> {
     const { default: Store } = await import('electron-store')
     return new Store<StoreSchema>({
       name: 'distill',
-      defaults: { meetings: [], pending: [], deleted: [] }
+      defaults: { meetings: [], pending: [], pendingMeta: {}, deleted: [] }
     }) as unknown as StoreInstance
   })()
   return storePromise
@@ -56,10 +63,19 @@ async function upsertLocal(meeting: Meeting): Promise<void> {
   store.set('meetings', [meeting, ...all.filter((m) => m.id !== meeting.id)])
 }
 
-async function queuePending(meeting: Meeting): Promise<void> {
+async function queuePending(meeting: Meeting, lastError?: string): Promise<void> {
   const store = await getStore()
   const pending = store.get('pending')
   store.set('pending', [meeting, ...pending.filter((m) => m.id !== meeting.id)])
+  const meta = { ...(store.get('pendingMeta') ?? {}) }
+  const prev = meta[meeting.id]
+  const attempts = (prev?.attempts ?? 0) + 1
+  meta[meeting.id] = {
+    attempts,
+    nextAttemptAt: Date.now() + nextBackoff(attempts),
+    lastError
+  }
+  store.set('pendingMeta', meta)
 }
 
 async function removePending(id: string): Promise<void> {
@@ -68,6 +84,11 @@ async function removePending(id: string): Promise<void> {
     'pending',
     store.get('pending').filter((m) => m.id !== id)
   )
+  const meta = { ...(store.get('pendingMeta') ?? {}) }
+  if (meta[id]) {
+    delete meta[id]
+    store.set('pendingMeta', meta)
+  }
 }
 
 async function pushToSupabase(meeting: Meeting): Promise<boolean> {
@@ -104,11 +125,11 @@ export async function saveMeeting(meeting: Meeting): Promise<Meeting> {
       await upsertLocal(record)
       await removePending(record.id)
     } else {
-      await queuePending(record)
+      await queuePending(record, 'Falha ao enviar para o Supabase.')
     }
   } catch (err) {
     console.warn('saveMeeting sync failed, queued:', err)
-    await queuePending(record)
+    await queuePending(record, (err as Error).message)
   }
 
   return record
@@ -184,17 +205,48 @@ export async function listMeetings(): Promise<Meeting[]> {
   }
 }
 
-export async function syncPendingMeetings(): Promise<{ synced: number; remaining: number }> {
+export async function syncPendingMeetings(
+  options: { force?: boolean } = {}
+): Promise<{ synced: number; remaining: number }> {
   const store = await getStore()
   const pending = store.get('pending')
+  const meta = store.get('pendingMeta') ?? {}
+  const now = Date.now()
   let synced = 0
   for (const meeting of pending) {
-    const ok = await pushToSupabase(meeting)
-    if (ok) {
-      synced++
-      await removePending(meeting.id)
-      await upsertLocal({ ...meeting, synced: true })
+    const entry = meta[meeting.id]
+    if (!options.force && entry && entry.nextAttemptAt > now) continue
+    try {
+      const ok = await pushToSupabase(meeting)
+      if (ok) {
+        synced++
+        await removePending(meeting.id)
+        await upsertLocal({ ...meeting, synced: true })
+      } else {
+        await queuePending(meeting, 'Falha ao enviar para o Supabase.')
+      }
+    } catch (err) {
+      await queuePending(meeting, (err as Error).message)
     }
   }
-  return { synced, remaining: store.get('pending').length }
+  return { synced, remaining: (await getStore()).get('pending').length }
+}
+
+let syncSchedulerTimer: NodeJS.Timeout | null = null
+
+export function startPendingSyncScheduler(intervalMs = 30_000): void {
+  if (syncSchedulerTimer) return
+  syncSchedulerTimer = setInterval(() => {
+    void syncPendingMeetings().catch((err) =>
+      console.warn('Scheduled sync failed:', err)
+    )
+  }, intervalMs)
+  if (syncSchedulerTimer.unref) syncSchedulerTimer.unref()
+}
+
+export function stopPendingSyncScheduler(): void {
+  if (syncSchedulerTimer) {
+    clearInterval(syncSchedulerTimer)
+    syncSchedulerTimer = null
+  }
 }

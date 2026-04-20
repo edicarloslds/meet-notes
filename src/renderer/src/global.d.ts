@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import type { DistillAPI } from '../../preload'
 
 declare global {

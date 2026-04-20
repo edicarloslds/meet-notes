@@ -15,7 +15,11 @@ import {
 } from '../shared/types'
 import { WHISPER_MODELS } from './modelDownloader'
 
-export type StageReporter = (stage: StageName, status: StageStatus, error?: string) => void
+export interface StageExtra {
+  error?: string
+  progress?: number
+}
+export type StageReporter = (stage: StageName, status: StageStatus, extra?: StageExtra) => void
 import { getSettingSync } from './settingsService'
 
 const OLLAMA_HOST_DEFAULT = 'http://127.0.0.1:11434'
@@ -159,7 +163,7 @@ function run(
   bin: string,
   args: string[],
   signal?: AbortSignal,
-  opts?: { logStderr?: boolean }
+  opts?: { logStderr?: boolean; onStderr?: (chunk: string) => void }
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -175,6 +179,7 @@ function run(
       const s = d.toString()
       stderr += s
       if (opts?.logStderr) process.stderr.write(`[${tag}] ${s}`)
+      opts?.onStderr?.(s)
     })
     proc.on('error', reject)
     proc.on('close', (code, sig) => {
@@ -208,7 +213,8 @@ async function convertToWav(
 async function runWhisperOnWav(
   wavPath: string,
   dir: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onProgress?: (percent: number) => void
 ): Promise<string> {
   const whisperModel = getSettingSync('whisperModel')
   if (!whisperModel) {
@@ -220,11 +226,27 @@ async function runWhisperOnWav(
   const whisperBin = resolveWhisperBin()
   const whisperLanguage = getSettingSync('whisperLanguage') || WHISPER_LANGUAGE_DEFAULT
   const outBase = join(dir, 'out')
+  let lastReported = -1
+  const progressRegex = /progress\s*=\s*(\d+)\s*%/gi
   try {
     await run(
       whisperBin,
-      ['-m', whisperModel, '-f', wavPath, '-l', whisperLanguage, '-otxt', '-of', outBase, '-nt'],
-      signal
+      ['-m', whisperModel, '-f', wavPath, '-l', whisperLanguage, '-otxt', '-of', outBase, '-nt', '-pp'],
+      signal,
+      onProgress
+        ? {
+            onStderr: (chunk) => {
+              let m: RegExpExecArray | null
+              while ((m = progressRegex.exec(chunk)) !== null) {
+                const pct = Math.max(0, Math.min(100, Number(m[1])))
+                if (pct !== lastReported) {
+                  lastReported = pct
+                  onProgress(pct)
+                }
+              }
+            }
+          }
+        : undefined
     )
   } catch (err) {
     if (isMissingBinaryError(err)) {
@@ -401,7 +423,7 @@ export async function transcribeAndSummarize(
   let wavPath: string
   const stageErr = (stage: StageName, err: unknown): void => {
     const msg = isAbortError(err) ? 'Cancelado' : (err as Error).message
-    onStage?.(stage, 'failed', msg)
+    onStage?.(stage, 'failed', { error: msg })
   }
   try {
     onStage?.('converting', 'active')
@@ -416,7 +438,9 @@ export async function transcribeAndSummarize(
     onStage?.('transcribing', 'active')
     let transcript: string
     try {
-      transcript = await runWhisperOnWav(wavPath, dir, signal)
+      transcript = await runWhisperOnWav(wavPath, dir, signal, (pct) =>
+        onStage?.('transcribing', 'active', { progress: pct })
+      )
       onStage?.('transcribing', 'done')
     } catch (err) {
       stageErr('transcribing', err)
@@ -425,7 +449,7 @@ export async function transcribeAndSummarize(
 
     if (!transcript) {
       const msg = 'Nenhuma fala foi reconhecida pelo Whisper. Verifique o áudio e o modelo selecionado.'
-      onStage?.('transcribing', 'failed', msg)
+      onStage?.('transcribing', 'failed', { error: msg })
       throw new Error(msg)
     }
 
@@ -438,6 +462,47 @@ export async function transcribeAndSummarize(
       stageErr('summarizing', err)
       throw err
     }
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined)
+  }
+}
+
+function buildWavFromPcm(pcm: Int16Array, sampleRate: number): Buffer {
+  const numChannels = 1
+  const bitsPerSample = 16
+  const byteRate = (sampleRate * numChannels * bitsPerSample) / 8
+  const blockAlign = (numChannels * bitsPerSample) / 8
+  const dataSize = pcm.byteLength
+  const buffer = Buffer.alloc(44 + dataSize)
+  buffer.write('RIFF', 0)
+  buffer.writeUInt32LE(36 + dataSize, 4)
+  buffer.write('WAVE', 8)
+  buffer.write('fmt ', 12)
+  buffer.writeUInt32LE(16, 16)
+  buffer.writeUInt16LE(1, 20)
+  buffer.writeUInt16LE(numChannels, 22)
+  buffer.writeUInt32LE(sampleRate, 24)
+  buffer.writeUInt32LE(byteRate, 28)
+  buffer.writeUInt16LE(blockAlign, 32)
+  buffer.writeUInt16LE(bitsPerSample, 34)
+  buffer.write('data', 36)
+  buffer.writeUInt32LE(dataSize, 40)
+  Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength).copy(buffer, 44)
+  return buffer
+}
+
+export async function transcribePcmChunk(
+  pcm: Int16Array,
+  sampleRate: number,
+  signal?: AbortSignal,
+  onProgress?: (percent: number) => void
+): Promise<string> {
+  if (pcm.length === 0) return ''
+  const dir = await mkdtemp(join(tmpdir(), 'distill-chunk-'))
+  try {
+    const wavPath = join(dir, 'chunk.wav')
+    await writeFile(wavPath, buildWavFromPcm(pcm, sampleRate))
+    return await runWhisperOnWav(wavPath, dir, signal, onProgress)
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => undefined)
   }

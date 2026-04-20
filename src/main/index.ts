@@ -12,13 +12,24 @@ import {
   SystemSettingsSection
 } from '../shared/types'
 import { startMeetingWatcher, stopMeetingWatcher } from './meetingWatcher'
-import { getOllamaStatus, getWhisperStatus, isAbortError, transcribeAndSummarize, summarizeTranscript } from './aiService'
+import {
+  assertOllamaReady,
+  assertWhisperReady,
+  getOllamaStatus,
+  getWhisperStatus,
+  isAbortError,
+  summarizeTranscript,
+  transcribeAndSummarize,
+  transcribePcmChunk
+} from './aiService'
 import {
   cleanupStaleProcessing,
   deleteMeeting,
   listMeetings,
   resetSupabaseClient,
   saveMeeting,
+  startPendingSyncScheduler,
+  stopPendingSyncScheduler,
   syncPendingMeetings
 } from './storageService'
 import { getSettings, primeSettingsCache, saveSettings } from './settingsService'
@@ -142,13 +153,27 @@ function handleDetected(payload: MeetingDetectedPayload): void {
 
 const processingJobs = new Map<string, AbortController>()
 
-function emitProgress(meetingId: string, stage: StageName, status: StageStatus, error?: string): void {
+interface ChunkJob {
+  controller: AbortController
+  transcripts: string[]
+  queue: Promise<void>
+  cancelled: boolean
+}
+const chunkJobs = new Map<string, ChunkJob>()
+
+function emitProgress(
+  meetingId: string,
+  stage: StageName,
+  status: StageStatus,
+  extra?: { error?: string; progress?: number }
+): void {
   const payload: MeetingProgressEvent = {
     meetingId,
     stage,
     status,
     at: Date.now(),
-    ...(error ? { error } : {})
+    ...(extra?.error ? { error: extra.error } : {}),
+    ...(typeof extra?.progress === 'number' ? { progress: extra.progress } : {})
   }
   if (dashboardWindow && !dashboardWindow.isDestroyed()) {
     dashboardWindow.webContents.send(IpcChannels.MeetingProgress, payload)
@@ -206,6 +231,7 @@ app.whenReady().then(async () => {
     .catch((err) => console.warn('Cleanup on boot failed:', err))
 
   syncPendingMeetings().catch((err) => console.warn('Sync on boot failed:', err))
+  startPendingSyncScheduler()
 
   ipcMain.handle(
     IpcChannels.ProcessAudio,
@@ -233,7 +259,7 @@ app.whenReady().then(async () => {
         try {
           const result = await transcribeAndSummarize(
             Buffer.from(audioBuffer),
-            (stage, status, error) => emitProgress(meetingId, stage, status, error),
+            (stage, status, extra) => emitProgress(meetingId, stage, status, extra),
             controller.signal
           )
           emitProgress(meetingId, 'saving', 'active')
@@ -251,7 +277,7 @@ app.whenReady().then(async () => {
             await deleteMeeting(meetingId).catch(() => undefined)
           } else {
             console.warn('process-and-save failed:', err)
-            emitProgress(meetingId, 'saving', 'failed', (err as Error).message)
+            emitProgress(meetingId, 'saving', 'failed', { error: (err as Error).message })
             await saveMeeting({ ...placeholder, status: 'failed' }).catch(() => undefined)
           }
         } finally {
@@ -265,16 +291,148 @@ app.whenReady().then(async () => {
   )
 
   ipcMain.handle(IpcChannels.CancelProcessing, async (_e, id: string) => {
+    const chunkJob = chunkJobs.get(id)
+    if (chunkJob) {
+      chunkJob.cancelled = true
+      chunkJob.controller.abort()
+    }
     const controller = processingJobs.get(id)
     if (controller) {
       controller.abort()
       return
     }
+    if (chunkJob) return
     await deleteMeeting(id).catch(() => undefined)
     if (dashboardWindow && !dashboardWindow.isDestroyed()) {
       dashboardWindow.webContents.send(IpcChannels.MeetingEnded)
     }
   })
+
+  ipcMain.handle(IpcChannels.StartMeetingChunks, async (_e, meetingId: string) => {
+    await assertWhisperReady()
+    await assertOllamaReady()
+    const existing = chunkJobs.get(meetingId)
+    if (existing) {
+      existing.cancelled = true
+      existing.controller.abort()
+    }
+    chunkJobs.set(meetingId, {
+      controller: new AbortController(),
+      transcripts: [],
+      queue: Promise.resolve(),
+      cancelled: false
+    })
+  })
+
+  ipcMain.handle(
+    IpcChannels.SubmitAudioChunk,
+    async (_e, meetingId: string, pcmBuffer: ArrayBuffer, sampleRate: number) => {
+      const job = chunkJobs.get(meetingId)
+      if (!job || job.cancelled) return
+      const int16 = new Int16Array(pcmBuffer)
+      job.queue = job.queue.then(async () => {
+        if (job.cancelled || job.controller.signal.aborted) return
+        try {
+          const text = await transcribePcmChunk(int16, sampleRate, job.controller.signal)
+          if (text.trim()) job.transcripts.push(text.trim())
+        } catch (err) {
+          if (!isAbortError(err)) console.warn('Chunk transcription failed:', err)
+        }
+      })
+    }
+  )
+
+  ipcMain.handle(IpcChannels.AbortMeetingChunks, async (_e, meetingId: string) => {
+    const job = chunkJobs.get(meetingId)
+    if (!job) return
+    job.cancelled = true
+    job.controller.abort()
+    chunkJobs.delete(meetingId)
+  })
+
+  ipcMain.on(
+    IpcChannels.FinalizeMeeting,
+    (_e, placeholder: Meeting, remainingPcm: ArrayBuffer | null, sampleRate: number) => {
+      void (async (): Promise<void> => {
+        const meetingId = placeholder.id
+        const job =
+          chunkJobs.get(meetingId) ??
+          ({
+            controller: new AbortController(),
+            transcripts: [],
+            queue: Promise.resolve(),
+            cancelled: false
+          } satisfies ChunkJob)
+        chunkJobs.set(meetingId, job)
+        processingJobs.set(meetingId, job.controller)
+        const startedAt = Date.now()
+
+        await saveMeeting({ ...placeholder, status: 'processing' }).catch(() => undefined)
+
+        try {
+          if (remainingPcm && remainingPcm.byteLength > 0) {
+            const int16 = new Int16Array(remainingPcm)
+            emitProgress(meetingId, 'transcribing', 'active')
+            job.queue = job.queue.then(async () => {
+              if (job.cancelled || job.controller.signal.aborted) return
+              const text = await transcribePcmChunk(
+                int16,
+                sampleRate,
+                job.controller.signal,
+                (pct) => emitProgress(meetingId, 'transcribing', 'active', { progress: pct })
+              )
+              if (text.trim()) job.transcripts.push(text.trim())
+            })
+          } else {
+            emitProgress(meetingId, 'transcribing', 'active')
+          }
+          await job.queue
+          if (job.cancelled) throw new DOMException('Aborted', 'AbortError')
+          emitProgress(meetingId, 'transcribing', 'done')
+
+          const transcript = job.transcripts.join('\n').trim()
+          if (!transcript) {
+            const msg =
+              'Nenhuma fala foi reconhecida pelo Whisper. Verifique o áudio e o modelo selecionado.'
+            emitProgress(meetingId, 'transcribing', 'failed', { error: msg })
+            throw new Error(msg)
+          }
+
+          emitProgress(meetingId, 'summarizing', 'active')
+          const { summary, actionItems } = await summarizeTranscript(
+            transcript,
+            job.controller.signal
+          )
+          emitProgress(meetingId, 'summarizing', 'done')
+
+          emitProgress(meetingId, 'saving', 'active')
+          await saveMeeting({
+            ...placeholder,
+            raw_transcript: transcript,
+            summary,
+            action_items: actionItems,
+            status: 'ready',
+            processing_ms: Date.now() - startedAt
+          })
+          emitProgress(meetingId, 'saving', 'done')
+        } catch (err) {
+          if (isAbortError(err) || job.controller.signal.aborted || job.cancelled) {
+            await deleteMeeting(meetingId).catch(() => undefined)
+          } else {
+            console.warn('finalize-meeting failed:', err)
+            emitProgress(meetingId, 'saving', 'failed', { error: (err as Error).message })
+            await saveMeeting({ ...placeholder, status: 'failed' }).catch(() => undefined)
+          }
+        } finally {
+          chunkJobs.delete(meetingId)
+          processingJobs.delete(meetingId)
+        }
+        if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+          dashboardWindow.webContents.send(IpcChannels.MeetingEnded)
+        }
+      })()
+    }
+  )
 
   ipcMain.handle(IpcChannels.ListMeetings, async () => listMeetings())
   ipcMain.handle(IpcChannels.SyncPending, async () => syncPendingMeetings())
@@ -336,6 +494,7 @@ app.whenReady().then(async () => {
 app.on('before-quit', () => {
   isQuitting = true
   stopMeetingWatcher()
+  stopPendingSyncScheduler()
   globalShortcut.unregisterAll()
 })
 
