@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type ReactElement } from 'react'
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
+  type ReactElement
+} from 'react'
 import {
   OLLAMA_NOT_READY_MARKER,
   WHISPER_NOT_READY_MARKER,
@@ -8,17 +15,30 @@ import {
 } from '../../../shared/types'
 import { useAudioRecorder } from '../hooks/useAudioRecorder'
 
+type PillRegionStyle = CSSProperties & {
+  WebkitAppRegion: 'drag' | 'no-drag'
+}
+
+interface PillDragState {
+  pointerStartX: number
+  pointerStartY: number
+  pillStartX: number
+  pillStartY: number
+}
+
 export function Pill(): ReactElement {
   const [title, setTitle] = useState<string>('Reunião detectada')
   const [elapsed, setElapsed] = useState(0)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [pending, setPending] = useState<'start' | 'stop' | null>(null)
   const [showSpinner, setShowSpinner] = useState(false)
+  const [isCompact, setIsCompact] = useState(false)
   const [captureMode, setCaptureMode] = useState<AudioCaptureMode>('auto')
   const [activeCaptureSource, setActiveCaptureSource] = useState<AudioCaptureSource | null>(null)
   const [captureHint, setCaptureHint] = useState<string>('Audio do sistema com fallback para microfone')
   const tickRef = useRef<number | null>(null)
   const meetingIdRef = useRef<string | null>(null)
+  const dragRef = useRef<PillDragState | null>(null)
   const { start, stop, sampleRate, isRecording, stream, captureWarnings } = useAudioRecorder()
 
   useEffect(() => {
@@ -35,6 +55,13 @@ export function Pill(): ReactElement {
       if (p?.title) setTitle(p.title)
     })
     return off
+  }, [])
+
+  useEffect(() => {
+    void window.distill
+      .getSettings()
+      .then((settings) => setIsCompact(settings.pillCompact === true))
+      .catch(() => undefined)
   }, [])
 
   useEffect(() => {
@@ -146,28 +173,197 @@ export function Pill(): ReactElement {
     return `${m}:${r}`
   }
 
+  const handleToggleCompact = async (): Promise<void> => {
+    const next = !isCompact
+    setIsCompact(next)
+    try {
+      await window.distill.setPillCompact(next)
+    } catch (err) {
+      console.error('Failed to toggle pill compact mode:', err)
+      setIsCompact(!next)
+    }
+  }
+
+  useEffect(() => {
+    const handleMouseMove = (event: MouseEvent): void => {
+      const drag = dragRef.current
+      if (!drag) return
+      const nextX = drag.pillStartX + (event.screenX - drag.pointerStartX)
+      const nextY = drag.pillStartY + (event.screenY - drag.pointerStartY)
+      void window.distill.setPillPosition(nextX, nextY)
+    }
+
+    const handleMouseUp = (): void => {
+      dragRef.current = null
+    }
+
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [])
+
+  const handlePointerDown = async (
+    event: ReactMouseEvent<HTMLDivElement>
+  ): Promise<void> => {
+    const target = event.target as HTMLElement
+    if (target.closest('button')) return
+    const position = await window.distill.getPillPosition()
+    if (!position) return
+    dragRef.current = {
+      pointerStartX: event.screenX,
+      pointerStartY: event.screenY,
+      pillStartX: position.x,
+      pillStartY: position.y
+    }
+  }
+
+  const noDragStyle: PillRegionStyle = { WebkitAppRegion: 'no-drag' }
+
   return (
     <div className="w-full h-full flex items-center justify-center p-1">
-      <div className="flex items-center gap-2 px-3 h-14 w-full rounded-full bg-slate-900/75 backdrop-blur-md border border-white/10 shadow-2xl text-white">
-        {isRecording ? (
+      <div
+        className={`flex items-center ${
+          isCompact ? 'justify-center gap-2 px-2' : 'gap-2 px-3'
+        } h-full w-full rounded-full bg-slate-900/75 backdrop-blur-md border border-white/10 shadow-2xl text-white select-none cursor-grab active:cursor-grabbing`}
+        style={noDragStyle}
+        title="Arraste para mover. Clique duas vezes para recentralizar."
+        onDoubleClick={(event) => {
+          const target = event.target as HTMLElement
+          if (target.closest('button')) return
+          void window.distill.resetPillPosition()
+        }}
+        onMouseDown={(event) => void handlePointerDown(event)}
+      >
+        {isCompact ? (
+          isRecording ? (
+            <>
+              <button
+                onClick={() => void handleCancel()}
+                title="Cancelar"
+                className="shrink-0 w-7 h-7 flex items-center justify-center rounded-full text-white/70 hover:text-white hover:bg-white/10 transition cursor-pointer"
+                style={noDragStyle}
+              >
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                  <path d="M6 6l12 12M18 6L6 18" />
+                </svg>
+              </button>
+
+              <button
+                onClick={() => void handleToggleCompact()}
+                title="Expandir pill"
+                className="shrink-0 w-7 h-7 flex items-center justify-center rounded-full text-white/60 hover:text-white hover:bg-white/10 transition cursor-pointer"
+                style={noDragStyle}
+              >
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+                  <path d="M16 3h3a2 2 0 0 1 2 2v3" />
+                  <path d="M8 21H5a2 2 0 0 1-2-2v-3" />
+                  <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+                </svg>
+              </button>
+
+              <button
+                onClick={() => void handleStop()}
+                disabled={pending !== null}
+                title="Parar gravação"
+                aria-label="Parar gravação"
+                className="shrink-0 w-7 h-7 flex items-center justify-center rounded-full bg-red-500 hover:bg-red-400 disabled:opacity-70 disabled:cursor-wait text-white transition cursor-pointer"
+                style={noDragStyle}
+              >
+                {pending === 'stop' && showSpinner ? (
+                  <Spinner />
+                ) : (
+                  <span className="w-2.5 h-2.5 rounded-sm bg-white" />
+                )}
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={() => void handleCancel()}
+                title="Fechar"
+                className="shrink-0 w-7 h-7 flex items-center justify-center rounded-full text-white/60 hover:text-white hover:bg-white/10 transition cursor-pointer"
+                style={noDragStyle}
+              >
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                  <path d="M6 6l12 12M18 6L6 18" />
+                </svg>
+              </button>
+
+              <button
+                onClick={() => void handleToggleCompact()}
+                title="Expandir pill"
+                className="shrink-0 w-7 h-7 flex items-center justify-center rounded-full text-white/60 hover:text-white hover:bg-white/10 transition cursor-pointer"
+                style={noDragStyle}
+              >
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+                  <path d="M16 3h3a2 2 0 0 1 2 2v3" />
+                  <path d="M8 21H5a2 2 0 0 1-2-2v-3" />
+                  <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+                </svg>
+              </button>
+
+              <button
+                onClick={() => void handleStart()}
+                disabled={pending !== null}
+                title={errorMsg ?? 'Iniciar gravação'}
+                aria-label="Iniciar gravação"
+                className="shrink-0 w-7 h-7 flex items-center justify-center rounded-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-70 disabled:cursor-wait text-white transition cursor-pointer"
+                style={noDragStyle}
+              >
+                {pending === 'start' && showSpinner ? (
+                  <Spinner />
+                ) : (
+                  <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden>
+                    <path d="M8 6.5v11l9-5.5-9-5.5z" />
+                  </svg>
+                )}
+              </button>
+            </>
+          )
+        ) : isRecording ? (
           <>
             <button
               onClick={() => void handleCancel()}
               title="Cancelar"
               className="shrink-0 w-8 h-8 flex items-center justify-center rounded-full text-white/70 hover:text-white hover:bg-white/10 transition cursor-pointer"
+              style={noDragStyle}
             >
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                 <path d="M6 6l12 12M18 6L6 18" />
+                </svg>
+              </button>
+
+              <button
+                onClick={() => void handleToggleCompact()}
+                title="Compactar pill"
+              className="shrink-0 w-8 h-8 flex items-center justify-center rounded-full text-white/55 hover:text-white hover:bg-white/10 transition cursor-pointer"
+              style={noDragStyle}
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M10 3H5a2 2 0 0 0-2 2v5" />
+                <path d="M14 3h5a2 2 0 0 1 2 2v5" />
+                <path d="M10 21H5a2 2 0 0 1-2-2v-5" />
+                <path d="M14 21h5a2 2 0 0 0 2-2v-5" />
+                <path d="M9 9l6 6" />
+                <path d="M15 9l-6 6" />
               </svg>
             </button>
 
             <div className="flex-1 min-w-0">
-              <div className="flex items-center justify-center gap-3 min-w-0">
+              <div className="text-[11px] font-medium text-white/85 truncate">
+                {title}
+              </div>
+              <div className="mt-1 flex items-center gap-2 min-w-0">
                 <ListenBars stream={stream} />
                 <span className="text-xs font-mono text-white/80 tabular-nums">{fmt(elapsed)}</span>
-              </div>
-              <div className="mt-0.5 text-center text-[10px] text-white/50 truncate">
-                {formatSourceLabel(activeCaptureSource)}{captureWarnings[0] ? ` · ${captureWarnings[0]}` : ''}
+                <span className="text-[10px] text-white/50 truncate">
+                  {formatSourceLabel(activeCaptureSource)}{captureWarnings[0] ? ` · ${captureWarnings[0]}` : ''}
+                </span>
               </div>
             </div>
 
@@ -176,6 +372,7 @@ export function Pill(): ReactElement {
               disabled={pending !== null}
               title="Parar gravação"
               className="shrink-0 h-8 px-3 flex items-center gap-1.5 rounded-full bg-red-500 hover:bg-red-400 disabled:opacity-70 disabled:cursor-wait text-white text-xs font-medium transition cursor-pointer"
+              style={noDragStyle}
             >
               {pending === 'stop' && showSpinner ? (
                 <Spinner />
@@ -191,9 +388,26 @@ export function Pill(): ReactElement {
               onClick={() => void handleCancel()}
               title="Fechar"
               className="shrink-0 w-8 h-8 flex items-center justify-center rounded-full text-white/60 hover:text-white hover:bg-white/10 transition cursor-pointer"
+              style={noDragStyle}
             >
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                 <path d="M6 6l12 12M18 6L6 18" />
+                </svg>
+              </button>
+
+            <button
+              onClick={() => void handleToggleCompact()}
+              title="Compactar pill"
+              className="shrink-0 w-8 h-8 flex items-center justify-center rounded-full text-white/55 hover:text-white hover:bg-white/10 transition cursor-pointer"
+              style={noDragStyle}
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M10 3H5a2 2 0 0 0-2 2v5" />
+                <path d="M14 3h5a2 2 0 0 1 2 2v5" />
+                <path d="M10 21H5a2 2 0 0 1-2-2v-5" />
+                <path d="M14 21h5a2 2 0 0 0 2-2v-5" />
+                <path d="M9 9l6 6" />
+                <path d="M15 9l-6 6" />
               </svg>
             </button>
 
@@ -213,6 +427,7 @@ export function Pill(): ReactElement {
               onClick={() => void handleStart()}
               disabled={pending !== null}
               className="shrink-0 h-8 px-3 flex items-center gap-1.5 rounded-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-70 disabled:cursor-wait text-white text-xs font-medium transition cursor-pointer"
+              style={noDragStyle}
             >
               {pending === 'start' && showSpinner ? (
                 <Spinner />
@@ -277,7 +492,13 @@ function Spinner(): ReactElement {
 
 const BAR_COUNT = 28
 
-function ListenBars({ stream }: { stream: MediaStream | null }): ReactElement {
+function ListenBars({
+  stream,
+  compact = false
+}: {
+  stream: MediaStream | null
+  compact?: boolean
+}): ReactElement {
   const barRefs = useRef<Array<HTMLSpanElement | null>>([])
 
   useEffect(() => {
@@ -317,7 +538,7 @@ function ListenBars({ stream }: { stream: MediaStream | null }): ReactElement {
   }, [stream])
 
   return (
-    <div className="flex items-center gap-[2px] h-7" aria-hidden>
+    <div className={`flex items-center gap-[2px] ${compact ? 'h-5' : 'h-7'}`} aria-hidden>
       {Array.from({ length: BAR_COUNT }).map((_, i) => (
         <span
           key={i}

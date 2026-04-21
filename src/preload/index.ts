@@ -61,6 +61,14 @@ const api = {
   closePill: (): void => {
     ipcRenderer.send(IpcChannels.PillStop)
   },
+  resetPillPosition: (): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.ResetPillPosition),
+  setPillCompact: (compact: boolean): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.SetPillCompact, compact),
+  getPillPosition: (): Promise<{ x: number; y: number } | null> =>
+    ipcRenderer.invoke(IpcChannels.GetPillPosition),
+  setPillPosition: (x: number, y: number): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.SetPillPosition, x, y),
   simulateMeeting: (title?: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannels.SimulateMeeting, title),
   deleteMeeting: (id: string): Promise<void> =>

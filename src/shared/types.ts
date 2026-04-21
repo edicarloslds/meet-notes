@@ -51,6 +51,8 @@ export interface MeetingDetectedPayload {
   title: string
   appName: string
   detectedAt: string
+  windowId: number
+  bundleId?: string
 }
 
 export interface ProcessAudioResult {
@@ -122,6 +124,9 @@ export interface AppSettings {
   whisperModel?: string
   whisperLanguage?: string
   captureMode?: AudioCaptureMode
+  pillCompact?: boolean
+  pillX?: number
+  pillY?: number
   transcriptGlossary?: string
   supabaseUrl?: string
   supabaseAnonKey?: string
@@ -159,6 +164,10 @@ export const IpcChannels = {
   DeleteMeeting: 'meeting:delete',
   RegenerateSummary: 'meeting:regenerate-summary',
   ExportMeeting: 'meeting:export',
+  ResetPillPosition: 'pill:reset-position',
+  SetPillCompact: 'pill:set-compact',
+  GetPillPosition: 'pill:get-position',
+  SetPillPosition: 'pill:set-position',
   ProcessAndSave: 'audio:process-and-save',
   CancelProcessing: 'meeting:cancel-processing',
   MeetingProgress: 'meeting:progress',

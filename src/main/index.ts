@@ -38,7 +38,7 @@ import {
   stopPendingSyncScheduler,
   syncPendingMeetings
 } from './storageService'
-import { getSettings, primeSettingsCache, saveSettings } from './settingsService'
+import { getSettingSync, getSettings, primeSettingsCache, saveSettings } from './settingsService'
 import {
   cancelDownload,
   deleteModel,
@@ -51,6 +51,218 @@ let dashboardWindow: BrowserWindow | null = null
 let pillWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let isQuitting = false
+let pillPositionSaveTimer: ReturnType<typeof setTimeout> | null = null
+let suppressPillMovePersistence = false
+let promptInFlightForWindowId: number | null = null
+let dismissedMeetingWindowId: number | null = null
+
+interface PillBounds {
+  width: number
+  height: number
+}
+
+const PILL_EXPANDED_BOUNDS: PillBounds = { width: 380, height: 64 }
+const PILL_COMPACT_BOUNDS: PillBounds = { width: 132, height: 44 }
+const PILL_MARGIN = 32
+const PILL_SNAP_THRESHOLD = 44
+
+function getPillBounds(compact: boolean): PillBounds {
+  return compact ? PILL_COMPACT_BOUNDS : PILL_EXPANDED_BOUNDS
+}
+
+function getCurrentPillBounds(window: BrowserWindow): PillBounds {
+  const [width, height] = window.getSize()
+  return { width, height }
+}
+
+function getStoredPillCompact(): boolean {
+  return getSettingSync('pillCompact') === true
+}
+
+function clampPillPosition(x: number, y: number, bounds: PillBounds): { x: number; y: number } {
+  const display = screen.getDisplayNearestPoint({
+    x: Math.round(x + bounds.width / 2),
+    y: Math.round(y + bounds.height / 2)
+  })
+  const { workArea } = display
+  const maxX = workArea.x + Math.max(0, workArea.width - bounds.width)
+  const maxY = workArea.y + Math.max(0, workArea.height - bounds.height)
+
+  return {
+    x: Math.min(Math.max(x, workArea.x), maxX),
+    y: Math.min(Math.max(y, workArea.y), maxY)
+  }
+}
+
+function snapAxis(value: number, targets: number[]): number {
+  let nearest = value
+  let nearestDistance = Number.POSITIVE_INFINITY
+  for (const target of targets) {
+    const distance = Math.abs(value - target)
+    if (distance < nearestDistance) {
+      nearestDistance = distance
+      nearest = target
+    }
+  }
+  return nearestDistance <= PILL_SNAP_THRESHOLD ? nearest : value
+}
+
+function snapPillPosition(x: number, y: number, bounds: PillBounds): { x: number; y: number } {
+  const clamped = clampPillPosition(x, y, bounds)
+  const display = screen.getDisplayNearestPoint({
+    x: Math.round(clamped.x + bounds.width / 2),
+    y: Math.round(clamped.y + bounds.height / 2)
+  })
+  const { workArea } = display
+  const left = workArea.x + PILL_MARGIN
+  const center = workArea.x + Math.round((workArea.width - bounds.width) / 2)
+  const right = workArea.x + workArea.width - bounds.width - PILL_MARGIN
+  const top = workArea.y + PILL_MARGIN
+  const bottom = workArea.y + workArea.height - bounds.height - PILL_MARGIN
+
+  return clampPillPosition(
+    snapAxis(clamped.x, [left, center, right]),
+    snapAxis(clamped.y, [top, bottom]),
+    bounds
+  )
+}
+
+function getDisplayForPillReset(window?: BrowserWindow): Electron.Display {
+  if (window && !window.isDestroyed()) {
+    const [x, y] = window.getPosition()
+    const [width, height] = window.getSize()
+    return screen.getDisplayNearestPoint({
+      x: Math.round(x + width / 2),
+      y: Math.round(y + height / 2)
+    })
+  }
+  const cursorPoint = screen.getCursorScreenPoint()
+  return screen.getDisplayNearestPoint(cursorPoint)
+}
+
+function getDefaultPillPosition(bounds: PillBounds, window?: BrowserWindow): { x: number; y: number } {
+  const display = getDisplayForPillReset(window)
+  const { workArea } = display
+  return {
+    x: workArea.x + Math.round((workArea.width - bounds.width) / 2),
+    y: workArea.y + workArea.height - bounds.height - PILL_MARGIN
+  }
+}
+
+function getInitialPillPosition(bounds: PillBounds): { x: number; y: number } {
+  const storedX = getSettingSync('pillX')
+  const storedY = getSettingSync('pillY')
+  if (typeof storedX === 'number' && Number.isFinite(storedX) && typeof storedY === 'number' && Number.isFinite(storedY)) {
+    return clampPillPosition(storedX, storedY, bounds)
+  }
+  return getDefaultPillPosition(bounds)
+}
+
+function setPillWindowBounds(window: BrowserWindow, bounds: PillBounds, x: number, y: number): { x: number; y: number } {
+  const next = clampPillPosition(x, y, bounds)
+  const [currentX, currentY] = window.getPosition()
+  const [currentWidth, currentHeight] = window.getSize()
+  if (
+    currentX === next.x &&
+    currentY === next.y &&
+    currentWidth === bounds.width &&
+    currentHeight === bounds.height
+  ) {
+    return next
+  }
+
+  suppressPillMovePersistence = true
+  window.setBounds({
+    x: next.x,
+    y: next.y,
+    width: bounds.width,
+    height: bounds.height
+  })
+  setTimeout(() => {
+    suppressPillMovePersistence = false
+  }, 0)
+  return next
+}
+
+function setPillWindowPosition(
+  window: BrowserWindow,
+  x: number,
+  y: number,
+  options?: { snap?: boolean; bounds?: PillBounds }
+): { x: number; y: number } {
+  const bounds = options?.bounds ?? getCurrentPillBounds(window)
+  const next = options?.snap ? snapPillPosition(x, y, bounds) : clampPillPosition(x, y, bounds)
+  const [currentX, currentY] = window.getPosition()
+  if (currentX === next.x && currentY === next.y) return next
+
+  suppressPillMovePersistence = true
+  window.setPosition(next.x, next.y)
+  setTimeout(() => {
+    suppressPillMovePersistence = false
+  }, 0)
+  return next
+}
+
+async function persistPillPosition(window: BrowserWindow): Promise<void> {
+  const [x, y] = window.getPosition()
+  const next = setPillWindowPosition(window, x, y, { snap: true })
+  const current = await getSettings()
+  await saveSettings({
+    ...current,
+    pillX: next.x,
+    pillY: next.y
+  })
+}
+
+function schedulePersistPillPosition(): void {
+  if (!pillWindow || pillWindow.isDestroyed() || suppressPillMovePersistence) return
+  if (pillPositionSaveTimer) clearTimeout(pillPositionSaveTimer)
+  pillPositionSaveTimer = setTimeout(() => {
+    void (async () => {
+      if (!pillWindow || pillWindow.isDestroyed()) return
+      await persistPillPosition(pillWindow)
+    })().catch((err) => {
+      console.warn('Failed to persist pill position:', err)
+    })
+  }, 160)
+}
+
+async function resetPillPosition(): Promise<void> {
+  const current = await getSettings()
+  const compact = getStoredPillCompact()
+  const bounds = getPillBounds(compact)
+  await saveSettings({
+    ...current,
+    pillX: undefined,
+    pillY: undefined
+  })
+
+  if (pillWindow && !pillWindow.isDestroyed()) {
+    const next = getDefaultPillPosition(bounds, pillWindow)
+    setPillWindowBounds(pillWindow, bounds, next.x, next.y)
+  }
+}
+
+async function setPillCompact(compact: boolean): Promise<void> {
+  const current = await getSettings()
+  const bounds = getPillBounds(compact)
+  await saveSettings({
+    ...current,
+    pillCompact: compact
+  })
+
+  if (pillWindow && !pillWindow.isDestroyed()) {
+    const [x, y] = pillWindow.getPosition()
+    const next = snapPillPosition(x, y, bounds)
+    setPillWindowBounds(pillWindow, bounds, next.x, next.y)
+    await saveSettings({
+      ...(await getSettings()),
+      pillCompact: compact,
+      pillX: next.x,
+      pillY: next.y
+    })
+  }
+}
 
 function createDashboardWindow(): void {
   dashboardWindow = new BrowserWindow({
@@ -95,14 +307,14 @@ function openDashboard(): void {
 function createPillWindow(): void {
   if (pillWindow && !pillWindow.isDestroyed()) return
 
-  const pillWidth = 380
-  const pillHeight = 64
-  const { workArea } = screen.getPrimaryDisplay()
+  const compact = getStoredPillCompact()
+  const bounds = getPillBounds(compact)
+  const initialPosition = getInitialPillPosition(bounds)
   pillWindow = new BrowserWindow({
-    width: pillWidth,
-    height: pillHeight,
-    x: workArea.x + Math.round((workArea.width - pillWidth) / 2),
-    y: workArea.y + workArea.height - pillHeight - 32,
+    width: bounds.width,
+    height: bounds.height,
+    x: initialPosition.x,
+    y: initialPosition.y,
     show: false,
     frame: false,
     transparent: true,
@@ -122,7 +334,14 @@ function createPillWindow(): void {
   pillWindow.setAlwaysOnTop(true, 'screen-saver')
   pillWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
   pillWindow.once('ready-to-show', () => pillWindow?.showInactive())
+  pillWindow.on('move', () => {
+    schedulePersistPillPosition()
+  })
   pillWindow.on('closed', () => {
+    if (pillPositionSaveTimer) {
+      clearTimeout(pillPositionSaveTimer)
+      pillPositionSaveTimer = null
+    }
     pillWindow = null
   })
 
@@ -145,16 +364,74 @@ function showPill(meetingTitle: string): void {
 
 function hidePill(): void {
   if (pillWindow && !pillWindow.isDestroyed()) {
+    void persistPillPosition(pillWindow).catch((err) => {
+      console.warn('Failed to persist pill position on close:', err)
+    })
     pillWindow.close()
     pillWindow = null
   }
 }
 
+async function promptToRecordMeeting(payload: MeetingDetectedPayload): Promise<boolean> {
+  const title = payload.title.trim()
+  const meetingLabel = title || 'uma reunião no Teams'
+  const message = payload.appName
+    ? `Parece que você abriu uma reunião em ${payload.appName}.`
+    : 'Parece que você abriu uma reunião.'
+  const detail = title
+    ? `${meetingLabel}\n\nQuer abrir a pill para começar a gravar?`
+    : 'Quer abrir a pill para começar a gravar?'
+
+  const options: Electron.MessageBoxOptions = {
+    type: 'question',
+    buttons: ['Agora não', 'Gravar reunião'],
+    defaultId: 1,
+    cancelId: 0,
+    noLink: true,
+    title: 'Reunião detectada',
+    message,
+    detail
+  }
+
+  const result =
+    dashboardWindow && !dashboardWindow.isDestroyed()
+      ? await dialog.showMessageBox(dashboardWindow, options)
+      : await dialog.showMessageBox(options)
+
+  return result.response === 1
+}
+
 function handleDetected(payload: MeetingDetectedPayload): void {
-  showPill(payload.title)
   if (dashboardWindow && !dashboardWindow.isDestroyed()) {
     dashboardWindow.webContents.send(IpcChannels.MeetingDetected, payload)
   }
+
+  if (pillWindow && !pillWindow.isDestroyed()) {
+    showPill(payload.title)
+    return
+  }
+
+  if (dismissedMeetingWindowId === payload.windowId) return
+  if (promptInFlightForWindowId === payload.windowId) return
+
+  promptInFlightForWindowId = payload.windowId
+  void promptToRecordMeeting(payload)
+    .then((shouldRecord) => {
+      if (shouldRecord) {
+        dismissedMeetingWindowId = null
+        showPill(payload.title)
+      } else {
+        dismissedMeetingWindowId = payload.windowId
+      }
+    })
+    .catch((err) => {
+      console.warn('Failed to confirm automatic recording:', err)
+    })
+    .finally(() => {
+      if (promptInFlightForWindowId === payload.windowId) {
+        promptInFlightForWindowId = null
+      }
+    })
 }
 
 const processingJobs = new Map<string, AbortController>()
@@ -337,6 +614,8 @@ function renderMeetingExport(meeting: Meeting, format: MeetingExportFormat): str
 }
 
 function handleEnded(): void {
+  promptInFlightForWindowId = null
+  dismissedMeetingWindowId = null
   if (dashboardWindow && !dashboardWindow.isDestroyed()) {
     dashboardWindow.webContents.send(IpcChannels.MeetingEnded)
   }
@@ -650,6 +929,23 @@ app.whenReady().then(async () => {
   ipcMain.handle(IpcChannels.ListMeetings, async () => listMeetings())
   ipcMain.handle(IpcChannels.SyncPending, async () => syncPendingMeetings())
   ipcMain.on(IpcChannels.PillStop, () => hidePill())
+  ipcMain.handle(IpcChannels.ResetPillPosition, async () => {
+    await resetPillPosition()
+  })
+  ipcMain.handle(IpcChannels.SetPillCompact, async (_e, compact: boolean) => {
+    await setPillCompact(compact)
+  })
+  ipcMain.handle(IpcChannels.GetPillPosition, async () => {
+    if (!pillWindow || pillWindow.isDestroyed()) return null
+    const [x, y] = pillWindow.getPosition()
+    return { x, y }
+  })
+  ipcMain.handle(IpcChannels.SetPillPosition, async (_e, x: number, y: number) => {
+    if (!pillWindow || pillWindow.isDestroyed()) return
+    setPillWindowPosition(pillWindow, x, y, {
+      bounds: getCurrentPillBounds(pillWindow)
+    })
+  })
   ipcMain.handle(IpcChannels.DeleteMeeting, async (_e, id: string) => {
     await deleteMeeting(id)
   })
@@ -716,7 +1012,8 @@ app.whenReady().then(async () => {
     handleDetected({
       title: title?.trim() || 'Reunião de teste',
       appName: 'Distill (simulado)',
-      detectedAt: new Date().toISOString()
+      detectedAt: new Date().toISOString(),
+      windowId: Date.now()
     })
   })
 

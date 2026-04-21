@@ -30,6 +30,9 @@ export const SETTINGS_KEYS = [
   'whisperModel',
   'whisperLanguage',
   'captureMode',
+  'pillCompact',
+  'pillX',
+  'pillY',
   'transcriptGlossary',
   'supabaseUrl',
   'supabaseAnonKey',
@@ -63,6 +66,9 @@ export async function saveSettings(next: AppSettings): Promise<AppSettings> {
   for (const key of SETTINGS_KEYS) {
     const value = next[key]
     if (typeof value === 'boolean') {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(cleaned as any)[key] = value
+    } else if (typeof value === 'number' && Number.isFinite(value)) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ;(cleaned as any)[key] = value
     } else if (typeof value === 'string' && value.trim()) {
