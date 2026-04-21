@@ -17,23 +17,23 @@ const STEPS: Step[] = [
   {
     id: 'microphone',
     title: 'Microfone',
-    description: 'Permite que o Distill capture o áudio das suas reuniões.',
-    why: 'Sem esta permissão, nenhuma gravação será possível.',
+    description: 'Permite que o Distill use o microfone como fallback ou no modo dedicado de captura.',
+    why: 'Sem esta permissão, o app nao consegue cair para microfone quando o audio do sistema nao estiver disponivel.',
     required: true
   },
   {
     id: 'screen-recording',
     title: 'Gravação de Tela',
     description:
-      'Permite ler o título da janela ativa para detectar quando uma reunião começa (Zoom, Meet, Teams).',
-    why: 'Necessário para iniciar a gravação automaticamente. A tela em si não é capturada.',
+      'Permite detectar reuniões e tentar capturar o audio do sistema quando voce escolhe uma janela ou tela com compartilhamento de audio.',
+    why: 'Necessario para o modo automatico ou sistema. O Distill nao salva imagem da tela; usa essa permissao para detectar a reuniao e acessar a captura com audio.',
     required: true
   },
   {
     id: 'accessibility',
     title: 'Acessibilidade (opcional)',
-    description: 'Em algumas versões do macOS, melhora a detecção de janelas de reunião.',
-    why: 'Só ative se a detecção automática não funcionar mesmo com Gravação de Tela ativa.',
+    description: 'Em algumas versões do macOS, melhora a deteccao de janelas de reuniao.',
+    why: 'So ative se a deteccao automatica nao funcionar mesmo com Gravacao de Tela ativa.',
     required: false
   }
 ]
@@ -82,7 +82,8 @@ export function Welcome({ onComplete }: Props): ReactElement {
           <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Bem-vindo ao Distill</h1>
           <p className="mt-3 text-slate-600 leading-relaxed">
             Antes de começar, o macOS precisa conceder algumas permissões. Clique nos botões abaixo para abrir
-            cada painel de privacidade e ative o Distill manualmente.
+            cada painel de privacidade e ative o Distill manualmente. Depois, voce podera escolher entre audio
+            do sistema, microfone ou modo automatico nas Configuracoes.
           </p>
         </div>
 
@@ -153,7 +154,7 @@ export function Welcome({ onComplete }: Props): ReactElement {
 
         <div className="mt-8 rounded-lg bg-slate-50 border border-slate-200 px-4 py-3 text-xs text-slate-600 leading-relaxed">
           <strong className="text-slate-700">Dica:</strong> após ativar cada permissão, o macOS pode pedir para
-          reiniciar o Distill para aplicar as mudanças. Você também pode gerenciar essas permissões depois em
+          reiniciar o Distill para aplicar as mudanças. Voce tambem pode gerenciar essas permissoes depois em
           <em> Configurações do Sistema → Privacidade e Segurança</em>.
         </div>
 

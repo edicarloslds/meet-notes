@@ -29,6 +29,8 @@ export const SETTINGS_KEYS = [
   'whisperBin',
   'whisperModel',
   'whisperLanguage',
+  'captureMode',
+  'transcriptGlossary',
   'supabaseUrl',
   'supabaseAnonKey',
   'disableSupabase',

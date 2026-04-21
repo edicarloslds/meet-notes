@@ -195,6 +195,7 @@ export async function listMeetings(): Promise<Meeting[]> {
       }
       const existing = merged.get(row.id)
       merged.set(row.id, {
+        ...existing,
         ...row,
         processing_ms: row.processing_ms ?? existing?.processing_ms,
         synced: true

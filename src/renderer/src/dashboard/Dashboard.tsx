@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import ReactMarkdown from 'react-markdown'
 import {
   OLLAMA_NOT_READY_MARKER,
+  type TranscriptSegment,
   WHISPER_NOT_READY_MARKER,
   type Meeting,
   type OllamaStatus,
@@ -10,6 +11,8 @@ import {
 import { SettingsPanel } from './SettingsPanel'
 import { ProcessingTimeline, type TimelineState } from './ProcessingTimeline'
 import { Welcome } from './Welcome'
+
+type SegmentQuality = TranscriptSegment['quality']
 
 export function Dashboard(): ReactElement {
   const [meetings, setMeetings] = useState<Meeting[]>([])
@@ -28,6 +31,10 @@ export function Dashboard(): ReactElement {
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null)
   const [showWelcome, setShowWelcome] = useState<boolean | null>(null)
   const [progressByMeeting, setProgressByMeeting] = useState<Record<string, TimelineState>>({})
+  const [editingSegmentId, setEditingSegmentId] = useState<string | null>(null)
+  const [segmentDraft, setSegmentDraft] = useState('')
+  const [speakerDraft, setSpeakerDraft] = useState('')
+  const [exportMsg, setExportMsg] = useState<string | null>(null)
   const [tickNow, setTickNow] = useState(() => Date.now())
   const tickIntervalRef = useRef<number | null>(null)
 
@@ -162,8 +169,18 @@ export function Dashboard(): ReactElement {
 
   const selected = meetings.find((m) => m.id === selectedId) ?? null
   const selectedStatus = selected?.status ?? 'ready'
+  const selectedSummaryStatus = selected
+    ? selected.summary_status ?? (selected.summary.trim() ? 'complete' : undefined)
+    : undefined
+
+  const clearSegmentEditing = (): void => {
+    setEditingSegmentId(null)
+    setSegmentDraft('')
+    setSpeakerDraft('')
+  }
 
   const startEdit = (m: Meeting): void => {
+    clearSegmentEditing()
     setSelectedId(m.id)
     setDraftTitle(m.title)
     setDraftTranscript(m.raw_transcript)
@@ -172,11 +189,20 @@ export function Dashboard(): ReactElement {
 
   const saveEdit = async (): Promise<void> => {
     if (!selected) return
+    const transcriptChanged = draftTranscript.trim() !== selected.raw_transcript.trim()
     await window.distill.saveMeeting({
       ...selected,
       title: draftTitle.trim() || selected.title,
-      raw_transcript: draftTranscript
+      raw_transcript: draftTranscript,
+      transcript_segments: transcriptChanged ? undefined : selected.transcript_segments,
+      summary: transcriptChanged ? '' : selected.summary,
+      action_items: transcriptChanged ? [] : selected.action_items,
+      summary_status: transcriptChanged ? 'skipped' : selected.summary_status,
+      summary_error: transcriptChanged
+        ? 'Resumo desatualizado após revisão manual da transcrição. Gere novamente.'
+        : selected.summary_error
     })
+    clearSegmentEditing()
     setIsEditing(false)
     await refresh()
   }
@@ -186,6 +212,7 @@ export function Dashboard(): ReactElement {
     setPendingDeleteId(null)
     if (selectedId === m.id) {
       setSelectedId(null)
+      clearSegmentEditing()
       setIsEditing(false)
     }
     try {
@@ -214,6 +241,60 @@ export function Dashboard(): ReactElement {
     } finally {
       setRegenerating(false)
     }
+  }
+
+  const startSegmentEdit = (segmentId: string, text: string): void => {
+    setEditingSegmentId(segmentId)
+    setSegmentDraft(text)
+    const speaker = selected?.transcript_segments?.find((segment) => segment.id === segmentId)?.speakerLabel ?? ''
+    setSpeakerDraft(speaker)
+  }
+
+  const cancelSegmentEdit = (): void => {
+    clearSegmentEditing()
+  }
+
+  const saveSegmentEdit = async (segmentId: string): Promise<void> => {
+    if (!selected?.transcript_segments?.length) return
+    const nextSegments = selected.transcript_segments.map((segment) =>
+      segment.id === segmentId
+        ? { ...segment, text: segmentDraft.trim() || segment.text }
+        : segment
+    )
+    await window.distill.saveMeeting({
+      ...selected,
+      transcript_segments: nextSegments,
+      raw_transcript: rebuildTranscriptFromSegments(nextSegments),
+      summary: '',
+      action_items: [],
+      summary_status: 'skipped',
+      summary_error: 'Resumo desatualizado após revisão por trecho. Gere novamente.'
+    })
+    cancelSegmentEdit()
+    await refresh()
+  }
+
+  const saveSpeakerEdit = async (segmentId: string): Promise<void> => {
+    if (!selected?.transcript_segments?.length) return
+    const nextSegments = selected.transcript_segments.map((segment) =>
+      segment.id === segmentId
+        ? { ...segment, speakerLabel: speakerDraft.trim() || undefined }
+        : segment
+    )
+    await window.distill.saveMeeting({
+      ...selected,
+      transcript_segments: nextSegments
+    })
+    cancelSegmentEdit()
+    await refresh()
+  }
+
+  const handleExport = async (format: 'markdown' | 'text'): Promise<void> => {
+    if (!selected) return
+    const result = await window.distill.exportMeeting(selected, format)
+    if (result.canceled) return
+    setExportMsg(`Exportado em ${result.path}`)
+    setTimeout(() => setExportMsg(null), 3500)
   }
 
   if (showWelcome === null) {
@@ -273,10 +354,10 @@ export function Dashboard(): ReactElement {
                 key={m.id}
                 role="button"
                 tabIndex={0}
-                onClick={() => { setShowSettings(false); setSelectedId(m.id); setIsEditing(false); setTab('summary') }}
+                onClick={() => { clearSegmentEditing(); setShowSettings(false); setSelectedId(m.id); setIsEditing(false); setTab('summary') }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
-                    setShowSettings(false); setSelectedId(m.id); setIsEditing(false); setTab('summary')
+                    clearSegmentEditing(); setShowSettings(false); setSelectedId(m.id); setIsEditing(false); setTab('summary')
                   }
                 }}
                 className={`group relative w-full text-left px-4 py-3 border-b border-slate-100 hover:bg-slate-50 transition cursor-pointer ${
@@ -301,6 +382,21 @@ export function Dashboard(): ReactElement {
                     {status === 'ready' && m.synced === false && !isPendingDelete && (
                       <span className="text-[10px] text-amber-600 bg-amber-50 rounded px-1.5 py-0.5">
                         offline
+                      </span>
+                    )}
+                    {m.capture_source && !isPendingDelete && (
+                      <span className="text-[10px] text-slate-600 bg-slate-100 rounded px-1.5 py-0.5">
+                        {formatCaptureSource(m.capture_source)}
+                      </span>
+                    )}
+                    {status === 'ready' && m.summary_status === 'skipped' && !m.summary.trim() && !isPendingDelete && (
+                      <span className="text-[10px] text-sky-700 bg-sky-100 rounded px-1.5 py-0.5">
+                        sem resumo
+                      </span>
+                    )}
+                    {status === 'ready' && m.summary_status === 'failed' && !isPendingDelete && (
+                      <span className="text-[10px] text-amber-700 bg-amber-100 rounded px-1.5 py-0.5">
+                        resumo falhou
                       </span>
                     )}
 
@@ -377,20 +473,11 @@ export function Dashboard(): ReactElement {
                 ? 'Instale o whisper-cli (ex.: brew install whisper-cpp).'
                 : 'Nenhum modelo do Whisper selecionado.'
               : null
-          const ollamaIssue =
-            ollamaStatus && (!ollamaStatus.reachable || !ollamaStatus.selectedModelInstalled)
-              ? !ollamaStatus.reachable
-                ? `Ollama indisponível em ${ollamaStatus.host}.`
-                : `Modelo "${ollamaStatus.selectedModel}" não instalado no Ollama.`
-              : null
-          if (!whisperIssue && !ollamaIssue) return null
-          const msgs = [whisperIssue && `Whisper: ${whisperIssue}`, ollamaIssue && `Ollama: ${ollamaIssue}`]
-            .filter(Boolean)
-            .join(' · ')
+          if (!whisperIssue) return null
           return (
             <div className="bg-amber-50 border-b border-amber-200 px-6 py-3 flex items-center justify-between gap-4">
               <div className="text-sm text-amber-900">
-                <span className="font-medium">Dependências pendentes.</span> {msgs}
+                <span className="font-medium">Transcrição indisponível.</span> Whisper: {whisperIssue}
               </div>
               <button
                 type="button"
@@ -402,6 +489,24 @@ export function Dashboard(): ReactElement {
             </div>
           )
         })()}
+        {!showSettings && ollamaStatus && (!ollamaStatus.reachable || !ollamaStatus.selectedModelInstalled) && (
+          <div className="bg-sky-50 border-b border-sky-200 px-6 py-3 flex items-center justify-between gap-4">
+            <div className="text-sm text-sky-900">
+              <span className="font-medium">Resumo opcional indisponível.</span>{' '}
+              {!ollamaStatus.reachable
+                ? `Ollama offline em ${ollamaStatus.host}.`
+                : `Modelo "${ollamaStatus.selectedModel}" ainda nao instalado.`}{' '}
+              A gravacao e a transcricao continuam funcionando.
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowSettings(true)}
+              className="shrink-0 text-xs font-medium bg-sky-600 hover:bg-sky-500 text-white rounded-md px-3 py-1.5"
+            >
+              Ajustar resumo
+            </button>
+          </div>
+        )}
         {showSettings ? (
           <SettingsPanel onClose={() => { setShowSettings(false); void refreshStatuses() }} />
         ) : selected ? (
@@ -423,46 +528,77 @@ export function Dashboard(): ReactElement {
                   <h2 className="text-4xl font-bold text-slate-900 leading-tight tracking-tight">
                     {selected.title}
                   </h2>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    {selected.capture_source && (
+                      <span className="text-xs font-medium text-slate-600 bg-slate-100 rounded-full px-2.5 py-1">
+                        Fonte: {formatCaptureSource(selected.capture_source)}
+                      </span>
+                    )}
+                    {selectedSummaryStatus && selectedSummaryStatus !== 'complete' && (
+                      <span className={`text-xs font-medium rounded-full px-2.5 py-1 ${summaryBadgeClass(selectedSummaryStatus)}`}>
+                        {selectedSummaryStatus === 'skipped' ? 'Resumo pendente' : 'Resumo com erro'}
+                      </span>
+                    )}
+                  </div>
                 </header>
 
                 {selectedStatus === 'ready' && (
                   <div className="flex items-center justify-between mb-8">
                     <div className="inline-flex items-center gap-1 p-1 bg-slate-100 rounded-xl">
-                      <TabButton active={tab === 'summary'} onClick={() => setTab('summary')}>
+                      <TabButton active={tab === 'summary'} onClick={() => { clearSegmentEditing(); setTab('summary') }}>
                         Resumo
                       </TabButton>
-                      <TabButton active={tab === 'transcript'} onClick={() => setTab('transcript')}>
+                      <TabButton active={tab === 'transcript'} onClick={() => { clearSegmentEditing(); setTab('transcript') }}>
                         Transcrição
                       </TabButton>
-                      <TabButton active={tab === 'actions'} onClick={() => setTab('actions')}>
+                      <TabButton active={tab === 'actions'} onClick={() => { clearSegmentEditing(); setTab('actions') }}>
                         Itens de Ação
                       </TabButton>
                     </div>
-                    {tab === 'summary' && selected.summary && (
+                    <div className="flex items-center gap-3">
                       <button
-                        onClick={() => {
-                          void navigator.clipboard.writeText(selected.summary)
-                          setCopied(true)
-                          setTimeout(() => setCopied(false), 1500)
-                        }}
-                        className={`inline-flex items-center justify-center gap-1.5 text-sm transition-colors w-[140px] ${
-                          copied ? 'text-emerald-600' : 'text-slate-500 hover:text-slate-900'
-                        }`}
+                        type="button"
+                        onClick={() => void handleExport('markdown')}
+                        className="text-sm text-slate-500 hover:text-slate-900"
                       >
-                        {copied ? (
-                          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M20 6L9 17l-5-5" />
-                          </svg>
-                        ) : (
-                          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <rect x="9" y="9" width="13" height="13" rx="2" />
-                            <path d="M5 15V5a2 2 0 0 1 2-2h10" />
-                          </svg>
-                        )}
-                        <span>{copied ? 'Copiado!' : 'Copiar resumo'}</span>
+                        Exportar .md
                       </button>
-                    )}
+                      <button
+                        type="button"
+                        onClick={() => void handleExport('text')}
+                        className="text-sm text-slate-500 hover:text-slate-900"
+                      >
+                        Exportar .txt
+                      </button>
+                      {tab === 'summary' && selected.summary && (
+                        <button
+                          onClick={() => {
+                            void navigator.clipboard.writeText(selected.summary)
+                            setCopied(true)
+                            setTimeout(() => setCopied(false), 1500)
+                          }}
+                          className={`inline-flex items-center justify-center gap-1.5 text-sm transition-colors w-[140px] ${
+                            copied ? 'text-emerald-600' : 'text-slate-500 hover:text-slate-900'
+                          }`}
+                        >
+                          {copied ? (
+                            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M20 6L9 17l-5-5" />
+                            </svg>
+                          ) : (
+                            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <rect x="9" y="9" width="13" height="13" rx="2" />
+                              <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+                            </svg>
+                          )}
+                          <span>{copied ? 'Copiado!' : 'Copiar resumo'}</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
+                )}
+                {exportMsg && (
+                  <div className="mb-4 text-xs text-emerald-600">{exportMsg}</div>
                 )}
               </>
             )}
@@ -481,9 +617,13 @@ export function Dashboard(): ReactElement {
               const errors = Object.values(progressByMeeting[selected.id] ?? {})
                 .map((s) => s?.error)
                 .filter(Boolean) as string[]
-              const notReadyErr = errors.find(
-                (e) => e.includes(WHISPER_NOT_READY_MARKER) || e.includes(OLLAMA_NOT_READY_MARKER)
-              )
+              const failureMessage = selected.failure_reason ?? errors[errors.length - 1]
+              const notReadyErr =
+                [selected.failure_reason, ...errors].find(
+                  (e): e is string =>
+                    typeof e === 'string' &&
+                    (e.includes(WHISPER_NOT_READY_MARKER) || e.includes(OLLAMA_NOT_READY_MARKER))
+                ) ?? null
               const cleanErr = notReadyErr
                 ?.replace(WHISPER_NOT_READY_MARKER, '')
                 .replace(OLLAMA_NOT_READY_MARKER, '')
@@ -504,7 +644,7 @@ export function Dashboard(): ReactElement {
                     </>
                   ) : (
                     <div className="text-xs text-slate-500 mt-1">
-                      {errors[errors.length - 1] ?? 'Não foi possível transcrever esta gravação. Você pode excluí-la pela lista.'}
+                      {failureMessage ?? 'Não foi possível transcrever esta gravação. Você pode excluí-la pela lista.'}
                     </div>
                   )}
                 </div>
@@ -525,6 +665,21 @@ export function Dashboard(): ReactElement {
 
             {selectedStatus === 'ready' && !isEditing && tab === 'summary' && !regenerating && (
               <section>
+                {selectedSummaryStatus && selectedSummaryStatus !== 'complete' && (
+                  <div className={`mb-5 rounded-lg border px-4 py-3 ${summaryPanelClass(selectedSummaryStatus)}`}>
+                    <div className="text-sm font-medium">
+                      {selectedSummaryStatus === 'skipped'
+                        ? 'Resumo nao gerado automaticamente'
+                        : 'Resumo nao pôde ser concluido'}
+                    </div>
+                    <div className="text-xs mt-1">
+                      {selected.summary_error ??
+                        (selectedSummaryStatus === 'skipped'
+                          ? 'A transcricao foi salva normalmente. Quando o Ollama estiver pronto, voce pode gerar o resumo depois.'
+                          : 'A transcricao foi salva, mas a etapa de resumo falhou.')}
+                    </div>
+                  </div>
+                )}
                 {selected.summary ? (
                   <div>
                     <div className="markdown-body">
@@ -565,7 +720,93 @@ export function Dashboard(): ReactElement {
 
             {selectedStatus === 'ready' && !isEditing && tab === 'transcript' && (
               <section>
-                {selected.raw_transcript.trim() ? (
+                {selected.transcript_segments?.length ? (
+                  <div className="space-y-4">
+                    {selected.transcript_segments.map((segment) => (
+                      <article
+                        key={segment.id}
+                        className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm"
+                      >
+                        <div className="flex items-start justify-between gap-4 mb-1.5">
+                          <div>
+                            <div className="text-[11px] font-medium text-slate-500 tabular-nums">
+                              {formatTimestamp(segment.startMs)} - {formatTimestamp(segment.endMs)}
+                            </div>
+                            <div className="mt-1 flex items-center gap-2">
+                              <span className={`text-[10px] font-medium rounded-full px-2 py-0.5 ${segmentQualityClass(segment.quality)}`}>
+                                {segmentQualityLabel(segment.quality)}
+                              </span>
+                              {segment.qualityReasons?.[0] && (
+                                <span className="text-[10px] text-slate-500">
+                                  {segment.qualityReasons[0]}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          {editingSegmentId === segment.id ? (
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => void saveSegmentEdit(segment.id)}
+                                className="text-xs font-medium text-sky-700 hover:text-sky-900"
+                              >
+                                Salvar
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void saveSpeakerEdit(segment.id)}
+                                className="text-xs font-medium text-amber-700 hover:text-amber-900"
+                              >
+                                Salvar speaker
+                              </button>
+                              <button
+                                type="button"
+                                onClick={cancelSegmentEdit}
+                                className="text-xs text-slate-500 hover:text-slate-800"
+                              >
+                                Cancelar
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => startSegmentEdit(segment.id, segment.text)}
+                              className="text-xs text-slate-500 hover:text-slate-800"
+                            >
+                              Revisar trecho
+                            </button>
+                          )}
+                        </div>
+                        <div className="mb-2 text-xs text-slate-500">
+                          Speaker: {segment.speakerLabel ?? 'Não definido'}
+                        </div>
+                        {editingSegmentId === segment.id ? (
+                          <div className="space-y-3">
+                            <input
+                              value={speakerDraft}
+                              onChange={(e) => setSpeakerDraft(e.target.value)}
+                              placeholder="Ex.: Speaker 1, Ana, Cliente"
+                              className="w-full text-sm text-slate-700 bg-white border border-slate-300 rounded-md px-3 py-2 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100"
+                            />
+                            <textarea
+                              value={segmentDraft}
+                              onChange={(e) => setSegmentDraft(e.target.value)}
+                              rows={4}
+                              className="w-full text-sm text-slate-700 bg-white border border-slate-300 rounded-md p-3 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100"
+                            />
+                          </div>
+                        ) : (
+                          <p className="text-[15px] leading-relaxed text-slate-700">
+                            {segment.speakerLabel && (
+                              <span className="font-semibold text-slate-900">{segment.speakerLabel}: </span>
+                            )}
+                            {segment.text}
+                          </p>
+                        )}
+                      </article>
+                    ))}
+                  </div>
+                ) : selected.raw_transcript.trim() ? (
                   <div className="space-y-4 text-[15px] leading-relaxed text-slate-700">
                     {splitTranscript(selected.raw_transcript).map((para, i) => (
                       <p key={i}>{para}</p>
@@ -644,7 +885,7 @@ export function Dashboard(): ReactElement {
                 <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 rounded-b-lg flex items-center justify-end gap-2">
                   <button
                     type="button"
-                    onClick={() => setIsEditing(false)}
+                    onClick={() => { clearSegmentEditing(); setIsEditing(false) }}
                     className="text-sm font-medium bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 rounded-md px-4 py-2 min-w-[96px]"
                   >
                     Cancelar
@@ -725,3 +966,68 @@ function splitTranscript(text: string): string[] {
   return chunks
 }
 
+function rebuildTranscriptFromSegments(segments: NonNullable<Meeting['transcript_segments']>): string {
+  return segments
+    .map((segment) => segment.text.trim())
+    .filter(Boolean)
+    .join('\n\n')
+    .trim()
+}
+
+function formatTimestamp(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000))
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+  if (hours > 0) {
+    return `${hours.toString().padStart(2, '0')}:${minutes
+      .toString()
+      .padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
+  }
+  return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
+}
+
+function formatCaptureSource(source: NonNullable<Meeting['capture_source']>): string {
+  switch (source) {
+    case 'system':
+      return 'audio do sistema'
+    case 'microphone':
+      return 'microfone'
+    case 'mixed':
+      return 'sistema + microfone'
+  }
+}
+
+function summaryBadgeClass(status: 'skipped' | 'failed'): string {
+  return status === 'skipped'
+    ? 'bg-sky-100 text-sky-700'
+    : 'bg-amber-100 text-amber-800'
+}
+
+function summaryPanelClass(status: 'skipped' | 'failed'): string {
+  return status === 'skipped'
+    ? 'border-sky-200 bg-sky-50 text-sky-900'
+    : 'border-amber-200 bg-amber-50 text-amber-900'
+}
+
+function segmentQualityLabel(quality: SegmentQuality): string {
+  switch (quality) {
+    case 'low':
+      return 'Revisar'
+    case 'medium':
+      return 'Atenção'
+    default:
+      return 'Bom'
+  }
+}
+
+function segmentQualityClass(quality: SegmentQuality): string {
+  switch (quality) {
+    case 'low':
+      return 'bg-red-100 text-red-700'
+    case 'medium':
+      return 'bg-amber-100 text-amber-800'
+    default:
+      return 'bg-emerald-100 text-emerald-700'
+  }
+}

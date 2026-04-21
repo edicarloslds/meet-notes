@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type ReactElement } from 'react'
 import {
   OLLAMA_NOT_READY_MARKER,
   WHISPER_NOT_READY_MARKER,
+  type AudioCaptureMode,
+  type AudioCaptureSource,
   type Meeting
 } from '../../../shared/types'
 import { useAudioRecorder } from '../hooks/useAudioRecorder'
@@ -12,9 +14,12 @@ export function Pill(): ReactElement {
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [pending, setPending] = useState<'start' | 'stop' | null>(null)
   const [showSpinner, setShowSpinner] = useState(false)
+  const [captureMode, setCaptureMode] = useState<AudioCaptureMode>('auto')
+  const [activeCaptureSource, setActiveCaptureSource] = useState<AudioCaptureSource | null>(null)
+  const [captureHint, setCaptureHint] = useState<string>('Audio do sistema com fallback para microfone')
   const tickRef = useRef<number | null>(null)
   const meetingIdRef = useRef<string | null>(null)
-  const { start, stop, sampleRate, isRecording, stream } = useAudioRecorder()
+  const { start, stop, sampleRate, isRecording, stream, captureWarnings } = useAudioRecorder()
 
   useEffect(() => {
     if (!pending) {
@@ -53,12 +58,17 @@ export function Pill(): ReactElement {
     setErrorMsg(null)
     setPending('start')
     try {
+      const settings = await window.distill.getSettings()
+      const selectedMode = settings.captureMode ?? 'auto'
+      setCaptureMode(selectedMode)
       const meetingId = crypto.randomUUID()
       meetingIdRef.current = meetingId
       await window.distill.startMeetingChunks(meetingId)
-      await start((pcm) => {
-        void window.distill.submitAudioChunk(meetingId, pcm, sampleRate)
-      })
+      const started = await start((chunk) => {
+        void window.distill.submitAudioChunk(meetingId, chunk, sampleRate)
+      }, selectedMode)
+      setActiveCaptureSource(started.source)
+      setCaptureHint(formatCaptureHint(selectedMode, started.source, started.warnings))
     } catch (err) {
       console.error('Failed to start recording:', err)
       const msg = err instanceof Error ? err.message : String(err)
@@ -67,6 +77,7 @@ export function Pill(): ReactElement {
         meetingIdRef.current = null
       }
       setErrorMsg(mapStartError(msg))
+      setActiveCaptureSource(null)
     } finally {
       setPending(null)
     }
@@ -99,7 +110,9 @@ export function Pill(): ReactElement {
       summary: '',
       action_items: [],
       created_at: new Date().toISOString(),
-      status: 'processing'
+      status: 'processing',
+      capture_mode: captureMode,
+      capture_source: activeCaptureSource ?? undefined
     }
     try {
       const remaining = await stop()
@@ -114,6 +127,7 @@ export function Pill(): ReactElement {
       } catch { /* ignore */ }
     } finally {
       meetingIdRef.current = null
+      setActiveCaptureSource(null)
       window.distill.closePill()
     }
   }
@@ -147,9 +161,14 @@ export function Pill(): ReactElement {
               </svg>
             </button>
 
-            <div className="flex-1 flex items-center justify-center gap-3 min-w-0">
-              <ListenBars stream={stream} />
-              <span className="text-xs font-mono text-white/80 tabular-nums">{fmt(elapsed)}</span>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-center gap-3 min-w-0">
+                <ListenBars stream={stream} />
+                <span className="text-xs font-mono text-white/80 tabular-nums">{fmt(elapsed)}</span>
+              </div>
+              <div className="mt-0.5 text-center text-[10px] text-white/50 truncate">
+                {formatSourceLabel(activeCaptureSource)}{captureWarnings[0] ? ` · ${captureWarnings[0]}` : ''}
+              </div>
             </div>
 
             <button
@@ -180,13 +199,13 @@ export function Pill(): ReactElement {
 
             <div className="flex-1 flex flex-col min-w-0">
               <span className="text-[10px] uppercase tracking-wider text-white/50">
-                {errorMsg ? 'Erro' : 'Reunião'}
+                {errorMsg ? 'Erro' : isRecording ? 'Capturando' : 'Fonte de audio'}
               </span>
               <span
                 title={errorMsg ?? undefined}
                 className={`text-xs truncate ${errorMsg ? 'text-red-300' : 'text-white/85'}`}
               >
-                {errorMsg ?? title}
+                {errorMsg ?? `${title} · ${captureHint}`}
               </span>
             </div>
 
@@ -207,6 +226,44 @@ export function Pill(): ReactElement {
       </div>
     </div>
   )
+}
+
+function formatCaptureHint(
+  mode: AudioCaptureMode,
+  source: AudioCaptureSource,
+  warnings: string[]
+): string {
+  const base =
+    mode === 'auto'
+      ? `Auto em uso: ${formatSourceLabel(source)}`
+      : `${formatModeLabel(mode)}: ${formatSourceLabel(source)}`
+  return warnings[0] ? `${base} (${warnings[0]})` : base
+}
+
+function formatSourceLabel(source: AudioCaptureSource | null): string {
+  switch (source) {
+    case 'system':
+      return 'audio do sistema'
+    case 'microphone':
+      return 'microfone'
+    case 'mixed':
+      return 'sistema + microfone'
+    default:
+      return 'aguardando captura'
+  }
+}
+
+function formatModeLabel(mode: AudioCaptureMode): string {
+  switch (mode) {
+    case 'system':
+      return 'Modo sistema'
+    case 'microphone':
+      return 'Modo microfone'
+    case 'mixed':
+      return 'Modo misto'
+    default:
+      return 'Modo automatico'
+  }
 }
 
 function Spinner(): ReactElement {

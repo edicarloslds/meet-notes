@@ -69,7 +69,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): ReactElemen
           <div className="text-xs uppercase tracking-wider text-slate-400 mb-2">Preferências</div>
           <h2 className="text-3xl font-bold text-slate-900 tracking-tight">Configurações</h2>
           <p className="text-sm text-slate-500 mt-2">
-            Ajuste os modelos usados para transcrição e resumo.
+            Ajuste a captura de áudio e os modelos usados para transcrição e resumo.
           </p>
         </div>
         <button
@@ -97,6 +97,34 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): ReactElemen
         }}
         className="mt-4 space-y-4"
       >
+        <section className="bg-white border border-slate-200 rounded-lg shadow-sm">
+          <header className="px-6 py-4 border-b border-slate-100">
+            <h3 className="text-sm font-semibold text-slate-800">Captura de áudio</h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Escolha de onde o Distill tenta capturar o som da reunião.
+            </p>
+          </header>
+          <div className="px-6 py-4">
+            <label htmlFor="setting-captureMode" className="block text-sm font-medium text-slate-700">
+              Modo preferido
+            </label>
+            <select
+              id="setting-captureMode"
+              value={values.captureMode ?? 'auto'}
+              onChange={(e) => update('captureMode', e.target.value as AppSettings['captureMode'])}
+              className={inputClass}
+            >
+              <option value="auto">Automático</option>
+              <option value="system">Áudio do sistema</option>
+              <option value="microphone">Microfone</option>
+              <option value="mixed">Sistema + microfone</option>
+            </select>
+            <p className="text-xs text-slate-500 mt-1.5">
+              No modo automático, o Distill tenta usar o áudio do sistema e cai para microfone quando a captura da reunião não estiver disponível.
+            </p>
+          </div>
+        </section>
+
         <section className="bg-white border border-slate-200 rounded-lg shadow-sm">
           <header className="px-6 py-4 border-b border-slate-100">
             <h3 className="text-sm font-semibold text-slate-800">Whisper (transcrição)</h3>
@@ -138,6 +166,23 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): ReactElemen
                 onChanged={() => void refreshStatuses()}
               />
             </div>
+            <div className="px-6 py-4">
+              <label htmlFor="setting-transcriptGlossary" className="block text-sm font-medium text-slate-700">
+                Glossário de correção
+              </label>
+              <textarea
+                id="setting-transcriptGlossary"
+                value={values.transcriptGlossary ?? ''}
+                onChange={(e) => update('transcriptGlossary', e.target.value)}
+                rows={5}
+                spellCheck={false}
+                placeholder={'OpenAI: open ai, open a.i.\nSupabase: super base, supa base'}
+                className={`${inputClass} min-h-[120px] font-mono`}
+              />
+              <p className="text-xs text-slate-500 mt-1.5">
+                Uma linha por termo no formato <code className="font-mono">Canonical: variante 1, variante 2</code>. O Distill aplica essas correções após a transcrição.
+              </p>
+            </div>
           </div>
         </section>
 
@@ -145,7 +190,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): ReactElemen
           <header className="px-6 py-4 border-b border-slate-100">
             <h3 className="text-sm font-semibold text-slate-800">Ollama (resumo)</h3>
             <p className="text-xs text-slate-500 mt-0.5">
-              Servidor que gera o resumo e os itens de ação a partir da transcrição.
+              Servidor que gera o resumo e os itens de ação a partir da transcrição. A transcrição continua funcionando mesmo se ele estiver offline.
             </p>
           </header>
           <div className="divide-y divide-slate-100">
@@ -194,20 +239,21 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): ReactElemen
           </header>
           <div className="divide-y divide-slate-100">
             <div className="px-6 py-4">
-              <label className="flex items-center gap-3 cursor-pointer">
+              <div className="flex items-center gap-3">
                 <input
+                  id="setting-disableSupabase"
                   type="checkbox"
                   checked={values.disableSupabase ?? false}
                   onChange={(e) => update('disableSupabase', e.target.checked)}
                   className="w-4 h-4 text-sky-600 rounded border-slate-300 focus:ring-sky-500"
                 />
-                <div>
+                <label htmlFor="setting-disableSupabase" className="cursor-pointer">
                   <div className="text-sm font-medium text-slate-700">Salvar apenas localmente</div>
                   <div className="text-xs text-slate-500 mt-0.5">
                     Ao marcar esta opção, os dados não serão sincronizados com o Supabase e ficarão apenas no seu computador.
                   </div>
-                </div>
-              </label>
+                </label>
+              </div>
             </div>
           </div>
         </section>
@@ -400,14 +446,14 @@ function OllamaStatusCard({
   return (
     <section
       className={`border rounded-lg p-5 ${
-        ready ? 'border-emerald-200 bg-emerald-50/50' : 'border-amber-200 bg-amber-50/60'
+        ready ? 'border-emerald-200 bg-emerald-50/50' : 'border-sky-200 bg-sky-50/60'
       }`}
     >
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-xs uppercase tracking-wider text-slate-500 mb-1">Status do Ollama</div>
-          <div className={`text-sm font-semibold ${ready ? 'text-emerald-700' : 'text-amber-800'}`}>
-            {ready ? 'Pronto para resumir' : 'Configuração incompleta'}
+          <div className={`text-sm font-semibold ${ready ? 'text-emerald-700' : 'text-sky-800'}`}>
+            {ready ? 'Pronto para resumir' : 'Opcional: configure para resumos automáticos'}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -425,10 +471,10 @@ function OllamaStatusCard({
           </button>
           <span
             className={`text-[11px] font-medium rounded-full px-2 py-0.5 ${
-              ready ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'
+              ready ? 'bg-emerald-100 text-emerald-700' : 'bg-sky-100 text-sky-800'
             }`}
           >
-            {ready ? 'OK' : 'Ação necessária'}
+            {ready ? 'OK' : 'Opcional'}
           </span>
         </div>
       </div>
@@ -443,10 +489,10 @@ function OllamaStatusCard({
                 Conectado{status.version ? ` · versão ${status.version}` : ''}
               </div>
             ) : (
-              <div className="text-[12px] text-amber-800 mt-0.5">
+              <div className="text-[12px] text-sky-800 mt-0.5">
                 {status.error ?? 'Não foi possível conectar.'}{' '}
                 <span className="text-slate-600">
-                  Inicie o Ollama (<code className="font-mono bg-white px-1 py-0.5 rounded">ollama serve</code>).
+                  As transcrições continuam funcionando; inicie o Ollama depois com <code className="font-mono bg-white px-1 py-0.5 rounded">ollama serve</code>.
                 </span>
               </div>
             )}
@@ -458,7 +504,7 @@ function OllamaStatusCard({
           <dd className="flex-1 min-w-0">
             <div className="text-sm font-medium text-slate-800 font-mono">{status.selectedModel}</div>
             {status.reachable && !status.selectedModelInstalled && (
-              <div className="text-[12px] text-amber-800 mt-0.5">
+              <div className="text-[12px] text-sky-800 mt-0.5">
                 Não instalado. Rode{' '}
                 <code className="font-mono bg-white px-1 py-0.5 rounded">ollama pull {status.selectedModel}</code>.
               </div>

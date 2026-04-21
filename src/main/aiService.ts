@@ -10,6 +10,7 @@ import {
   ProcessAudioResult,
   StageName,
   StageStatus,
+  TranscriptSegment,
   WHISPER_NOT_READY_MARKER,
   WhisperStatus
 } from '../shared/types'
@@ -26,6 +27,18 @@ const OLLAMA_HOST_DEFAULT = 'http://127.0.0.1:11434'
 const OLLAMA_MODEL_DEFAULT = 'gemma4:e2b'
 const WHISPER_BIN_DEFAULT = 'whisper-cli'
 const WHISPER_LANGUAGE_DEFAULT = 'pt'
+const AUDIO_FILTER_CHAIN = 'highpass=f=100,lowpass=f=7600,afftdn=nf=-25,dynaudnorm=f=150:g=15'
+const DEFAULT_FILLERS = [
+  'ahn',
+  'ah',
+  'eh',
+  'hum',
+  'uh',
+  'um',
+  'tipo',
+  'né',
+  'ne'
+]
 
 function resolveWhisperBin(): string {
   return getSettingSync('whisperBin') || WHISPER_BIN_DEFAULT
@@ -159,6 +172,130 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
+interface GlossaryEntry {
+  canonical: string
+  variants: string[]
+}
+
+export function normalizeTranscriptArtifacts(
+  transcript: string,
+  segments: TranscriptSegment[]
+): { transcript: string; segments: TranscriptSegment[] } {
+  const glossary = parseGlossary(getSettingSync('transcriptGlossary'))
+  const normalizedSegments = segments
+    .map((segment) => ({
+      ...segment,
+      text: normalizeTranscriptText(segment.text, glossary)
+    }))
+    .filter((segment) => segment.text.trim())
+    .map((segment) => ({
+      ...segment,
+      ...assessSegmentQuality(segment.text)
+    }))
+
+  if (normalizedSegments.length > 0) {
+    return {
+      transcript: normalizedSegments.map((segment) => segment.text).join('\n\n').trim(),
+      segments: normalizedSegments
+    }
+  }
+
+  return {
+    transcript: normalizeTranscriptText(transcript, glossary),
+    segments: []
+  }
+}
+
+function normalizeTranscriptText(input: string, glossary: GlossaryEntry[]): string {
+  let out = input.trim()
+  if (!out) return ''
+
+  out = out.replace(/\s+/g, ' ')
+  out = out.replace(/\b([\p{L}\p{N}]+)(?:\s+\1\b)+/giu, '$1')
+  out = collapseFillerBursts(out)
+  out = out.replace(/\s*([,.;!?])\s*/g, '$1 ')
+  out = out.replace(/\s+([,.;!?])/g, '$1')
+  out = out.replace(/([!?.,;:]){2,}/g, '$1')
+  out = applyGlossary(out, glossary)
+  out = capitalizeSentences(out)
+  out = out.replace(/\s+/g, ' ').trim()
+  if (!/[.!?]$/.test(out)) out = `${out}.`
+  return out
+}
+
+function parseGlossary(raw: unknown): GlossaryEntry[] {
+  if (typeof raw !== 'string' || !raw.trim()) return []
+  return raw
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .flatMap((line) => {
+      const match = line.match(/^([^:=]+)\s*[:=]\s*(.+)$/)
+      if (!match) return []
+      const canonical = match[1].trim()
+      const variants = match[2]
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean)
+      if (!canonical || variants.length === 0) return []
+      return [{ canonical, variants }]
+    })
+}
+
+function applyGlossary(text: string, glossary: GlossaryEntry[]): string {
+  let out = text
+  for (const entry of glossary) {
+    for (const variant of entry.variants) {
+      const re = new RegExp(`\\b${escapeRegex(variant)}\\b`, 'gi')
+      out = out.replace(re, entry.canonical)
+    }
+  }
+  return out
+}
+
+function collapseFillerBursts(text: string): string {
+  let out = text
+  for (const filler of DEFAULT_FILLERS) {
+    const re = new RegExp(`(?:\\b${escapeRegex(filler)}\\b[ ,]*){2,}`, 'gi')
+    out = out.replace(re, `${filler} `)
+  }
+  return out
+}
+
+function capitalizeSentences(text: string): string {
+  let shouldCapitalize = true
+  let out = ''
+  for (const char of text) {
+    if (shouldCapitalize && /\p{L}/u.test(char)) {
+      out += char.toLocaleUpperCase('pt-BR')
+      shouldCapitalize = false
+    } else {
+      out += char
+      if (/\S/u.test(char)) shouldCapitalize = false
+    }
+    if (/[.!?]/.test(char)) shouldCapitalize = true
+  }
+  return out
+}
+
+function assessSegmentQuality(text: string): {
+  quality: 'high' | 'medium' | 'low'
+  qualityReasons: string[]
+} {
+  const reasons: string[] = []
+  const words = text.trim().split(/\s+/).filter(Boolean)
+  if (words.length < 4) reasons.push('Trecho muito curto')
+  if (!/[.!?]$/.test(text.trim())) reasons.push('Sem pontuação final')
+  if (/\b(\p{L}+)(?:\s+\1\b){1,}/iu.test(text)) reasons.push('Possível repetição')
+  if (DEFAULT_FILLERS.some((filler) => new RegExp(`\\b${escapeRegex(filler)}\\b`, 'i').test(text))) {
+    reasons.push('Contém fillers')
+  }
+
+  if (reasons.length >= 2) return { quality: 'low', qualityReasons: reasons }
+  if (reasons.length === 1) return { quality: 'medium', qualityReasons: reasons }
+  return { quality: 'high', qualityReasons: ['Sem sinais heurísticos de problema'] }
+}
+
 function run(
   bin: string,
   args: string[],
@@ -200,14 +337,42 @@ async function convertToWav(
 ): Promise<string> {
   const ffmpegBin = resolveFfmpegPath()
   const webmPath = join(dir, 'input.webm')
+  const rawWavPath = join(dir, 'input-raw.wav')
   const wavPath = join(dir, 'input.wav')
   await writeFile(webmPath, audio)
   await run(
     ffmpegBin,
-    ['-y', '-i', webmPath, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wavPath],
+    ['-y', '-i', webmPath, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', rawWavPath],
     signal
   )
+  await preprocessWav(rawWavPath, wavPath, signal)
   return wavPath
+}
+
+async function preprocessWav(
+  inputPath: string,
+  outputPath: string,
+  signal?: AbortSignal
+): Promise<void> {
+  const ffmpegBin = resolveFfmpegPath()
+  await run(
+    ffmpegBin,
+    [
+      '-y',
+      '-i',
+      inputPath,
+      '-af',
+      AUDIO_FILTER_CHAIN,
+      '-ar',
+      '16000',
+      '-ac',
+      '1',
+      '-c:a',
+      'pcm_s16le',
+      outputPath
+    ],
+    signal
+  )
 }
 
 async function runWhisperOnWav(
@@ -441,6 +606,7 @@ export async function transcribeAndSummarize(
       transcript = await runWhisperOnWav(wavPath, dir, signal, (pct) =>
         onStage?.('transcribing', 'active', { progress: pct })
       )
+      transcript = normalizeTranscriptArtifacts(transcript, []).transcript
       onStage?.('transcribing', 'done')
     } catch (err) {
       stageErr('transcribing', err)
@@ -500,8 +666,10 @@ export async function transcribePcmChunk(
   if (pcm.length === 0) return ''
   const dir = await mkdtemp(join(tmpdir(), 'distill-chunk-'))
   try {
+    const rawWavPath = join(dir, 'chunk-raw.wav')
     const wavPath = join(dir, 'chunk.wav')
-    await writeFile(wavPath, buildWavFromPcm(pcm, sampleRate))
+    await writeFile(rawWavPath, buildWavFromPcm(pcm, sampleRate))
+    await preprocessWav(rawWavPath, wavPath, signal)
     return await runWhisperOnWav(wavPath, dir, signal, onProgress)
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => undefined)

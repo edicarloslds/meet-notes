@@ -1,6 +1,6 @@
 # Distill
 
-Desktop app (macOS) que detecta reuniões do Microsoft Teams, grava o áudio, transcreve localmente com whisper.cpp, resume via Ollama e persiste no Supabase — com fallback offline.
+Desktop app (macOS) que detecta reuniões, grava o áudio, transcreve localmente com whisper.cpp, resume via Ollama quando disponível e persiste no Supabase — com fallback offline.
 
 ## Stack
 
@@ -47,7 +47,7 @@ MAIN_VITE_SUPABASE_URL=https://xxx.supabase.co
 MAIN_VITE_SUPABASE_ANON_KEY=eyJ...
 ```
 
-As demais opções (host/modelo do Ollama, idioma do Whisper, etc.) são configuradas em **Configurações** dentro do app.
+As demais opções (captura de áudio, host/modelo do Ollama, idioma do Whisper etc.) são configuradas em **Configurações** dentro do app.
 
 O prefixo `MAIN_VITE_` é injetado pelo electron-vite no processo **Main** (nunca exposto no renderer).
 
@@ -89,17 +89,17 @@ src/
     src/
       pill/Pill.tsx
       dashboard/Dashboard.tsx
-      hooks/useAudioRecorder.ts   # desktopCapturer + MediaRecorder
+      hooks/useAudioRecorder.ts   # getDisplayMedia/getUserMedia + AudioWorklet (PCM)
       styles.css                  # @import "tailwindcss"; @theme { ... }
   shared/types.ts       # Tipos + canais IPC compartilhados
 ```
 
 ### Fluxo
 
-1. `meetingWatcher` faz poll a cada 3s com `get-windows`. Se o owner é Teams e o título contém "Reunião"/"Meeting", dispara `meeting:detected`.
+1. `meetingWatcher` faz poll a cada 3s com `get-windows`. Quando identifica uma janela de reunião compatível, dispara `meeting:detected`.
 2. O Main cria um `BrowserWindow` pílula (frameless, transparente, `alwaysOnTop`).
-3. Usuário clica **Gravar** → `useAudioRecorder` usa `chromeMediaSource: 'desktop'` (loopback) com fallback para microfone.
-4. Ao clicar **Parar**: estado vai para `transcribing` (loader *"IA gerando resumo…"*), o Main converte o webm para WAV 16kHz via `ffmpeg`, roda `whisper-cli` local e chama o Ollama para resumir, retornando `{ transcript, summary, action_items }`.
+3. Usuário clica **Gravar** → `useAudioRecorder` tenta capturar áudio do sistema via `getDisplayMedia`, com modos configuráveis para sistema, microfone ou misto e fallback explícito para microfone no modo automático.
+4. Ao clicar **Parar**: o Main consolida o áudio em WAV/PCM 16kHz, roda `whisper-cli` local e, se o Ollama estiver disponível, gera o resumo. Se o Ollama estiver offline, a transcrição ainda é salva normalmente.
 5. Estado `saving`: grava em `electron-store` (sempre) e faz upsert no Supabase. Se falhar, entra em fila `pending`.
 6. Ao voltar online, `syncPendingMeetings` reenvia. O Dashboard escuta `window.online` para disparar o sync automaticamente.
 
@@ -130,8 +130,8 @@ pnpm package          # electron-builder (macOS .dmg)
 ## Permissões macOS
 
 Na primeira execução o macOS pedirá:
-- **Gravação de Tela** (para `desktopCapturer` capturar áudio do sistema)
-- **Microfone** (fallback)
+- **Gravação de Tela** (para detectar reuniões e tentar capturar áudio do sistema)
+- **Microfone** (modo dedicado e fallback)
 - **Acessibilidade / Automation** (para `get-windows` ler o título da janela ativa)
 
 ## Notas técnicas
@@ -143,5 +143,5 @@ Na primeira execução o macOS pedirá:
 ## Limitações do MVP
 
 - Auth Supabase não integrado na UI — `user_id` é `null` por padrão (RLS permite).
-- `desktopCapturer` no macOS captura áudio apenas com permissão de gravação de tela; ambientes corporativos podem bloquear. Use o fallback de microfone quando necessário.
-- Transcrição é single-shot ao parar a gravação (não em chunks durante a reunião). Chunking em tempo real seria a próxima evolução.
+- A disponibilidade de áudio do sistema depende do seletor de captura do macOS e pode variar por app, janela ou política corporativa. O modo automático cai para microfone quando necessário.
+- A transcrição já é feita em chunks locais, mas ainda sem stitching avançado entre janelas; a próxima evolução é reconciliar overlap e melhorar o contexto entre segmentos.

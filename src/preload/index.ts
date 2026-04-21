@@ -1,9 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import {
   ActionItem,
+  AudioChunkPayload,
   AppSettings,
   IpcChannels,
   Meeting,
+  MeetingExportFormat,
   MeetingDetectedPayload,
   MeetingProgressEvent,
   ModelDownloadProgress,
@@ -44,11 +46,11 @@ const api = {
   },
   startMeetingChunks: (meetingId: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannels.StartMeetingChunks, meetingId),
-  submitAudioChunk: (meetingId: string, pcm: ArrayBuffer, sampleRate: number): Promise<void> =>
-    ipcRenderer.invoke(IpcChannels.SubmitAudioChunk, meetingId, pcm, sampleRate),
+  submitAudioChunk: (meetingId: string, chunk: AudioChunkPayload, sampleRate: number): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.SubmitAudioChunk, meetingId, chunk, sampleRate),
   abortMeetingChunks: (meetingId: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannels.AbortMeetingChunks, meetingId),
-  finalizeMeeting: (placeholder: Meeting, remaining: ArrayBuffer | null, sampleRate: number): void => {
+  finalizeMeeting: (placeholder: Meeting, remaining: AudioChunkPayload | null, sampleRate: number): void => {
     ipcRenderer.send(IpcChannels.FinalizeMeeting, placeholder, remaining, sampleRate)
   },
   saveMeeting: (meeting: Meeting): Promise<Meeting> =>
@@ -63,6 +65,8 @@ const api = {
     ipcRenderer.invoke(IpcChannels.SimulateMeeting, title),
   deleteMeeting: (id: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannels.DeleteMeeting, id),
+  exportMeeting: (meeting: Meeting, format: MeetingExportFormat): Promise<{ canceled: boolean; path?: string }> =>
+    ipcRenderer.invoke(IpcChannels.ExportMeeting, meeting, format),
   cancelProcessing: (id: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannels.CancelProcessing, id),
   regenerateSummary: (transcript: string): Promise<{ summary: string; actionItems: ActionItem[] }> =>

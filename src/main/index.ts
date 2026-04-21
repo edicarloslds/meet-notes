@@ -1,16 +1,21 @@
-import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, screen, shell, Tray } from 'electron'
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, screen, shell, Tray } from 'electron'
+import { writeFile } from 'fs/promises'
 import { join } from 'path'
 import {
+  AudioChunkPayload,
   AppSettings,
   IpcChannels,
   Meeting,
+  MeetingExportFormat,
   MeetingDetectedPayload,
   MeetingProgressEvent,
+  OLLAMA_NOT_READY_MARKER,
   ProcessAudioResult,
   StageName,
   StageStatus,
   SystemSettingsSection
 } from '../shared/types'
+import type { TranscriptSegment } from '../shared/types'
 import { startMeetingWatcher, stopMeetingWatcher } from './meetingWatcher'
 import {
   assertOllamaReady,
@@ -18,6 +23,7 @@ import {
   getOllamaStatus,
   getWhisperStatus,
   isAbortError,
+  normalizeTranscriptArtifacts,
   summarizeTranscript,
   transcribeAndSummarize,
   transcribePcmChunk
@@ -155,7 +161,8 @@ const processingJobs = new Map<string, AbortController>()
 
 interface ChunkJob {
   controller: AbortController
-  transcripts: string[]
+  transcript: string
+  segments: TranscriptSegment[]
   queue: Promise<void>
   cancelled: boolean
 }
@@ -178,6 +185,155 @@ function emitProgress(
   if (dashboardWindow && !dashboardWindow.isDestroyed()) {
     dashboardWindow.webContents.send(IpcChannels.MeetingProgress, payload)
   }
+}
+
+function cleanMarker(message: string | undefined, marker: string): string | undefined {
+  if (!message) return undefined
+  return message.replace(marker, '').trim() || undefined
+}
+
+function mergeChunkTranscript(existing: string, incoming: string): string {
+  const trimmedIncoming = incoming.trim()
+  if (!trimmedIncoming) return existing
+  if (!existing.trim()) return trimmedIncoming
+
+  const existingWords = tokenizeForOverlap(existing)
+  const incomingWords = trimmedIncoming.split(/\s+/)
+  const normalizedIncoming = incomingWords.map(normalizeWord).filter(Boolean)
+  const maxWords = Math.min(existingWords.length, normalizedIncoming.length, 24)
+
+  for (let overlap = maxWords; overlap >= 6; overlap--) {
+    const suffix = existingWords.slice(existingWords.length - overlap)
+    const prefix = normalizedIncoming.slice(0, overlap)
+    if (suffix.length === prefix.length && suffix.every((word, index) => word === prefix[index])) {
+      const remainder = incomingWords.slice(overlap).join(' ').trim()
+      return remainder ? `${existing.trim()}\n${remainder}` : existing.trim()
+    }
+  }
+
+  const existingNormalized = existingWords.join(' ')
+  const incomingNormalized = normalizedIncoming.join(' ')
+  if (incomingNormalized && existingNormalized.endsWith(incomingNormalized)) {
+    return existing.trim()
+  }
+
+  return `${existing.trim()}\n${trimmedIncoming}`
+}
+
+function appendTranscriptSegment(
+  segments: TranscriptSegment[],
+  next: TranscriptSegment
+): TranscriptSegment[] {
+  const mergedText = mergeChunkTranscript(segments[segments.length - 1]?.text ?? '', next.text)
+  if (segments.length === 0) {
+    return mergedText.trim() ? [{ ...next, text: mergedText.trim() }] : segments
+  }
+  const last = segments[segments.length - 1]
+  if (mergedText.trim() === last.text.trim()) return segments
+  const appendedText =
+    mergedText.length > last.text.length
+      ? mergedText.slice(last.text.length).trim()
+      : next.text.trim()
+  if (!appendedText) return segments
+  return [
+    ...segments,
+    {
+      ...next,
+      text: appendedText
+    }
+  ]
+}
+
+function tokenizeForOverlap(text: string): string[] {
+  return text
+    .split(/\s+/)
+    .map(normalizeWord)
+    .filter(Boolean)
+}
+
+function normalizeWord(word: string): string {
+  return word.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
+}
+
+function formatExportTimestamp(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000))
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+  if (hours > 0) {
+    return `${hours.toString().padStart(2, '0')}:${minutes
+      .toString()
+      .padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
+  }
+  return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
+}
+
+function slugifyFilename(input: string): string {
+  const normalized = input
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return normalized || 'meeting'
+}
+
+function renderMeetingExport(meeting: Meeting, format: MeetingExportFormat): string {
+  const title = meeting.title.trim() || 'Reunião'
+  const createdAt = new Date(meeting.created_at).toLocaleString('pt-BR')
+  const actionLines =
+    meeting.action_items?.length
+      ? meeting.action_items.map((item) => {
+          const owner = item.owner ? `${item.owner}: ` : ''
+          const due = item.due ? ` (até ${item.due})` : ''
+          return format === 'markdown'
+            ? `- ${owner}${item.task}${due}`
+            : `- ${owner}${item.task}${due}`
+        })
+      : [format === 'markdown' ? '- Nenhum item de ação identificado.' : '- Nenhum item de ação identificado.']
+
+  const transcriptBody =
+    meeting.transcript_segments?.length
+      ? meeting.transcript_segments
+          .map((segment) => {
+            const time = `${formatExportTimestamp(segment.startMs)}-${formatExportTimestamp(segment.endMs)}`
+            const speaker = segment.speakerLabel ? `${segment.speakerLabel}: ` : ''
+            return format === 'markdown'
+              ? `- [${time}] ${speaker}${segment.text}`
+              : `[${time}] ${speaker}${segment.text}`
+          })
+          .join(format === 'markdown' ? '\n' : '\n\n')
+      : meeting.raw_transcript.trim() || 'Sem transcrição.'
+
+  if (format === 'text') {
+    return [
+      title,
+      `Data: ${createdAt}`,
+      '',
+      'Resumo',
+      meeting.summary.trim() || 'Sem resumo.',
+      '',
+      'Itens de ação',
+      ...actionLines,
+      '',
+      'Transcrição',
+      transcriptBody
+    ].join('\n')
+  }
+
+  return [
+    `# ${title}`,
+    '',
+    `**Data:** ${createdAt}`,
+    '',
+    '## Resumo',
+    meeting.summary.trim() || 'Sem resumo.',
+    '',
+    '## Itens de Ação',
+    ...actionLines,
+    '',
+    '## Transcrição',
+    transcriptBody
+  ].join('\n')
 }
 
 function handleEnded(): void {
@@ -278,7 +434,12 @@ app.whenReady().then(async () => {
           } else {
             console.warn('process-and-save failed:', err)
             emitProgress(meetingId, 'saving', 'failed', { error: (err as Error).message })
-            await saveMeeting({ ...placeholder, status: 'failed' }).catch(() => undefined)
+            await saveMeeting({
+              ...placeholder,
+              status: 'failed',
+              failure_stage: 'saving',
+              failure_reason: (err as Error).message
+            }).catch(() => undefined)
           }
         } finally {
           processingJobs.delete(meetingId)
@@ -310,7 +471,6 @@ app.whenReady().then(async () => {
 
   ipcMain.handle(IpcChannels.StartMeetingChunks, async (_e, meetingId: string) => {
     await assertWhisperReady()
-    await assertOllamaReady()
     const existing = chunkJobs.get(meetingId)
     if (existing) {
       existing.cancelled = true
@@ -318,7 +478,8 @@ app.whenReady().then(async () => {
     }
     chunkJobs.set(meetingId, {
       controller: new AbortController(),
-      transcripts: [],
+      transcript: '',
+      segments: [],
       queue: Promise.resolve(),
       cancelled: false
     })
@@ -326,15 +487,25 @@ app.whenReady().then(async () => {
 
   ipcMain.handle(
     IpcChannels.SubmitAudioChunk,
-    async (_e, meetingId: string, pcmBuffer: ArrayBuffer, sampleRate: number) => {
+    async (_e, meetingId: string, chunk: AudioChunkPayload, sampleRate: number) => {
       const job = chunkJobs.get(meetingId)
       if (!job || job.cancelled) return
-      const int16 = new Int16Array(pcmBuffer)
+      const int16 = new Int16Array(chunk.pcm)
       job.queue = job.queue.then(async () => {
         if (job.cancelled || job.controller.signal.aborted) return
         try {
           const text = await transcribePcmChunk(int16, sampleRate, job.controller.signal)
-          if (text.trim()) job.transcripts.push(text.trim())
+          const merged = mergeChunkTranscript(job.transcript, text)
+          const appended = merged.slice(job.transcript.length).trim()
+          if (appended) {
+            job.transcript = merged
+            job.segments = appendTranscriptSegment(job.segments, {
+              id: `${meetingId}-${chunk.startMs}-${chunk.endMs}`,
+              startMs: chunk.startMs,
+              endMs: chunk.endMs,
+              text
+            })
+          }
         } catch (err) {
           if (!isAbortError(err)) console.warn('Chunk transcription failed:', err)
         }
@@ -352,27 +523,30 @@ app.whenReady().then(async () => {
 
   ipcMain.on(
     IpcChannels.FinalizeMeeting,
-    (_e, placeholder: Meeting, remainingPcm: ArrayBuffer | null, sampleRate: number) => {
+    (_e, placeholder: Meeting, remainingChunk: AudioChunkPayload | null, sampleRate: number) => {
       void (async (): Promise<void> => {
         const meetingId = placeholder.id
         const job =
           chunkJobs.get(meetingId) ??
           ({
             controller: new AbortController(),
-            transcripts: [],
+            transcript: '',
+            segments: [],
             queue: Promise.resolve(),
             cancelled: false
           } satisfies ChunkJob)
         chunkJobs.set(meetingId, job)
         processingJobs.set(meetingId, job.controller)
         const startedAt = Date.now()
+        let failedStage: StageName | 'capture' = 'transcribing'
 
         await saveMeeting({ ...placeholder, status: 'processing' }).catch(() => undefined)
 
         try {
-          if (remainingPcm && remainingPcm.byteLength > 0) {
-            const int16 = new Int16Array(remainingPcm)
+          if (remainingChunk && remainingChunk.pcm.byteLength > 0) {
+            const int16 = new Int16Array(remainingChunk.pcm)
             emitProgress(meetingId, 'transcribing', 'active')
+            failedStage = 'transcribing'
             job.queue = job.queue.then(async () => {
               if (job.cancelled || job.controller.signal.aborted) return
               const text = await transcribePcmChunk(
@@ -381,7 +555,17 @@ app.whenReady().then(async () => {
                 job.controller.signal,
                 (pct) => emitProgress(meetingId, 'transcribing', 'active', { progress: pct })
               )
-              if (text.trim()) job.transcripts.push(text.trim())
+              const merged = mergeChunkTranscript(job.transcript, text)
+              const appended = merged.slice(job.transcript.length).trim()
+              if (appended) {
+                job.transcript = merged
+                job.segments = appendTranscriptSegment(job.segments, {
+                  id: `${meetingId}-${remainingChunk.startMs}-${remainingChunk.endMs}`,
+                  startMs: remainingChunk.startMs,
+                  endMs: remainingChunk.endMs,
+                  text
+                })
+              }
             })
           } else {
             emitProgress(meetingId, 'transcribing', 'active')
@@ -390,7 +574,9 @@ app.whenReady().then(async () => {
           if (job.cancelled) throw new DOMException('Aborted', 'AbortError')
           emitProgress(meetingId, 'transcribing', 'done')
 
-          const transcript = job.transcripts.join('\n').trim()
+          const normalized = normalizeTranscriptArtifacts(job.transcript, job.segments)
+          const transcript = normalized.transcript.trim()
+          const transcriptSegments = normalized.segments
           if (!transcript) {
             const msg =
               'Nenhuma fala foi reconhecida pelo Whisper. Verifique o áudio e o modelo selecionado.'
@@ -398,21 +584,43 @@ app.whenReady().then(async () => {
             throw new Error(msg)
           }
 
+          let summary = ''
+          let actionItems = placeholder.action_items
+          let summaryStatus: Meeting['summary_status'] = 'complete'
+          let summaryError: string | undefined
+
           emitProgress(meetingId, 'summarizing', 'active')
-          const { summary, actionItems } = await summarizeTranscript(
-            transcript,
-            job.controller.signal
-          )
-          emitProgress(meetingId, 'summarizing', 'done')
+          failedStage = 'summarizing'
+          try {
+            await assertOllamaReady()
+            const result = await summarizeTranscript(transcript, job.controller.signal)
+            summary = result.summary
+            actionItems = result.actionItems
+            emitProgress(meetingId, 'summarizing', 'done')
+          } catch (err) {
+            if (isAbortError(err) || job.controller.signal.aborted || job.cancelled) throw err
+            const message = (err as Error).message
+            summaryStatus = message.includes(OLLAMA_NOT_READY_MARKER) ? 'skipped' : 'failed'
+            summaryError =
+              cleanMarker(message, OLLAMA_NOT_READY_MARKER) ??
+              'Nao foi possivel gerar o resumo desta reuniao.'
+            emitProgress(meetingId, 'summarizing', 'failed', { error: summaryError })
+          }
 
           emitProgress(meetingId, 'saving', 'active')
+          failedStage = 'saving'
           await saveMeeting({
             ...placeholder,
             raw_transcript: transcript,
+            transcript_segments: transcriptSegments,
             summary,
             action_items: actionItems,
             status: 'ready',
-            processing_ms: Date.now() - startedAt
+            processing_ms: Date.now() - startedAt,
+            summary_status: summaryStatus,
+            summary_error: summaryError,
+            failure_stage: summaryStatus === 'failed' ? 'summarizing' : undefined,
+            failure_reason: summaryStatus === 'failed' ? summaryError : undefined
           })
           emitProgress(meetingId, 'saving', 'done')
         } catch (err) {
@@ -421,7 +629,12 @@ app.whenReady().then(async () => {
           } else {
             console.warn('finalize-meeting failed:', err)
             emitProgress(meetingId, 'saving', 'failed', { error: (err as Error).message })
-            await saveMeeting({ ...placeholder, status: 'failed' }).catch(() => undefined)
+            await saveMeeting({
+              ...placeholder,
+              status: 'failed',
+              failure_stage: failedStage,
+              failure_reason: (err as Error).message
+            }).catch(() => undefined)
           }
         } finally {
           chunkJobs.delete(meetingId)
@@ -439,6 +652,25 @@ app.whenReady().then(async () => {
   ipcMain.on(IpcChannels.PillStop, () => hidePill())
   ipcMain.handle(IpcChannels.DeleteMeeting, async (_e, id: string) => {
     await deleteMeeting(id)
+  })
+  ipcMain.handle(IpcChannels.ExportMeeting, async (_e, meeting: Meeting, format: MeetingExportFormat) => {
+    const ext = format === 'markdown' ? 'md' : 'txt'
+    const defaultPath = `${slugifyFilename(meeting.title)}.${ext}`
+    const saveOptions = {
+      defaultPath,
+      filters: [
+        {
+          name: format === 'markdown' ? 'Markdown' : 'Texto',
+          extensions: [ext]
+        }
+      ]
+    }
+    const result = dashboardWindow && !dashboardWindow.isDestroyed()
+      ? await dialog.showSaveDialog(dashboardWindow, saveOptions)
+      : await dialog.showSaveDialog(saveOptions)
+    if (result.canceled || !result.filePath) return { canceled: true }
+    await writeFile(result.filePath, renderMeetingExport(meeting, format), 'utf8')
+    return { canceled: false, path: result.filePath }
   })
   ipcMain.handle(IpcChannels.RegenerateSummary, async (_e, transcript: string) => {
     return summarizeTranscript(transcript)

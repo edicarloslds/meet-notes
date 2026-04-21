@@ -1,4 +1,25 @@
 export type PillState = 'idle' | 'recording' | 'transcribing' | 'saving'
+export type AudioCaptureMode = 'auto' | 'system' | 'microphone' | 'mixed'
+export type AudioCaptureSource = 'system' | 'microphone' | 'mixed'
+export type SummaryStatus = 'complete' | 'skipped' | 'failed'
+
+export interface AudioChunkPayload {
+  pcm: ArrayBuffer
+  startMs: number
+  endMs: number
+}
+
+export interface TranscriptSegment {
+  id: string
+  startMs: number
+  endMs: number
+  text: string
+  speakerLabel?: string
+  quality?: 'high' | 'medium' | 'low'
+  qualityReasons?: string[]
+}
+
+export type MeetingExportFormat = 'markdown' | 'text'
 
 export interface Meeting {
   id: string
@@ -7,10 +28,17 @@ export interface Meeting {
   raw_transcript: string
   summary: string
   action_items: ActionItem[]
+  transcript_segments?: TranscriptSegment[]
   created_at: string
   synced?: boolean
   status?: 'processing' | 'ready' | 'failed'
   processing_ms?: number
+  capture_mode?: AudioCaptureMode
+  capture_source?: AudioCaptureSource
+  summary_status?: SummaryStatus
+  summary_error?: string
+  failure_stage?: StageName | 'capture'
+  failure_reason?: string
 }
 
 export interface ActionItem {
@@ -93,6 +121,8 @@ export interface AppSettings {
   whisperBin?: string
   whisperModel?: string
   whisperLanguage?: string
+  captureMode?: AudioCaptureMode
+  transcriptGlossary?: string
   supabaseUrl?: string
   supabaseAnonKey?: string
   disableSupabase?: boolean
@@ -128,6 +158,7 @@ export const IpcChannels = {
   SimulateMeeting: 'meeting:simulate',
   DeleteMeeting: 'meeting:delete',
   RegenerateSummary: 'meeting:regenerate-summary',
+  ExportMeeting: 'meeting:export',
   ProcessAndSave: 'audio:process-and-save',
   CancelProcessing: 'meeting:cancel-processing',
   MeetingProgress: 'meeting:progress',
