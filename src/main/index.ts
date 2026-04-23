@@ -61,8 +61,8 @@ interface PillBounds {
   height: number
 }
 
-const PILL_EXPANDED_BOUNDS: PillBounds = { width: 380, height: 64 }
-const PILL_COMPACT_BOUNDS: PillBounds = { width: 132, height: 44 }
+const PILL_EXPANDED_BOUNDS: PillBounds = { width: 500, height: 64 }
+const PILL_COMPACT_BOUNDS: PillBounds = { width: 164, height: 44 }
 const PILL_MARGIN = 32
 const PILL_SNAP_THRESHOLD = 44
 
@@ -352,13 +352,17 @@ function createPillWindow(): void {
   }
 }
 
-function showPill(meetingTitle: string): void {
+function showPill(meetingTitle: string, continueMeeting?: Meeting): void {
   createPillWindow()
+  const payload = {
+    title: meetingTitle,
+    ...(continueMeeting ? { continueMeeting } : {})
+  }
   pillWindow?.webContents.once('did-finish-load', () => {
-    pillWindow?.webContents.send(IpcChannels.MeetingDetected, { title: meetingTitle })
+    pillWindow?.webContents.send(IpcChannels.MeetingDetected, payload)
   })
   if (pillWindow?.webContents.isLoading() === false) {
-    pillWindow.webContents.send(IpcChannels.MeetingDetected, { title: meetingTitle })
+    pillWindow.webContents.send(IpcChannels.MeetingDetected, payload)
   }
 }
 
@@ -704,7 +708,11 @@ app.whenReady().then(async () => {
             summary: result.summary,
             action_items: result.actionItems,
             status: 'ready',
-            processing_ms: Date.now() - startedAt
+            processing_ms: Date.now() - startedAt,
+            summary_status: result.summaryStatus ?? 'complete',
+            summary_error: result.summaryError,
+            failure_stage: result.summaryStatus === 'failed' ? 'summarizing' : undefined,
+            failure_reason: result.summaryStatus === 'failed' ? result.summaryError : undefined
           })
           emitProgress(meetingId, 'saving', 'done')
         } catch (err) {
@@ -854,8 +862,12 @@ app.whenReady().then(async () => {
           emitProgress(meetingId, 'transcribing', 'done')
 
           const normalized = normalizeTranscriptArtifacts(job.transcript, job.segments)
-          const transcript = normalized.transcript.trim()
-          const transcriptSegments = normalized.segments
+          const newTranscript = normalized.transcript.trim()
+          const newTranscriptSegments = normalized.segments
+          const existingTranscript = placeholder.raw_transcript?.trim() ?? ''
+          const existingSegments = placeholder.transcript_segments ?? []
+          const transcript = [existingTranscript, newTranscript].filter(Boolean).join('\n\n').trim()
+          const transcriptSegments = [...existingSegments, ...newTranscriptSegments]
           if (!transcript) {
             const msg =
               'Nenhuma fala foi reconhecida pelo Whisper. Verifique o áudio e o modelo selecionado.'
@@ -1015,6 +1027,9 @@ app.whenReady().then(async () => {
       detectedAt: new Date().toISOString(),
       windowId: Date.now()
     })
+  })
+  ipcMain.handle(IpcChannels.ContinueMeeting, async (_e, meeting: Meeting) => {
+    showPill(meeting.title?.trim() || 'Continuar reunião', meeting)
   })
 
   app.on('activate', () => openDashboard())

@@ -20,9 +20,12 @@ export interface AudioRecorderHandle {
     onChunk: (chunk: AudioChunkPayload) => void,
     mode?: AudioCaptureMode
   ) => Promise<{ source: AudioCaptureSource; warnings: string[] }>
+  pause: () => Promise<AudioChunkPayload | null>
+  resume: () => Promise<void>
   stop: () => Promise<AudioChunkPayload | null>
   sampleRate: number
   isRecording: boolean
+  isPaused: boolean
   stream: MediaStream | null
   captureSource: AudioCaptureSource | null
   captureWarnings: string[]
@@ -96,6 +99,7 @@ export function useAudioRecorder(): AudioRecorderHandle {
   const bufferStartSampleRef = useRef(0)
   const lastEmittedEndSampleRef = useRef(0)
   const [isRecording, setIsRecording] = useState(false)
+  const [isPaused, setIsPaused] = useState(false)
   const [stream, setStream] = useState<MediaStream | null>(null)
   const [captureSource, setCaptureSource] = useState<AudioCaptureSource | null>(null)
   const [captureWarnings, setCaptureWarnings] = useState<string[]>([])
@@ -123,6 +127,11 @@ export function useAudioRecorder(): AudioRecorderHandle {
     }
     lastEmittedEndSampleRef.current = endSample
     return payload
+  }
+
+  const flushNewAudio = (): AudioChunkPayload | null => {
+    const hasNewAudio = totalCapturedSamplesRef.current > lastEmittedEndSampleRef.current
+    return hasNewAudio ? flushChunk() : null
   }
 
   const start = async (
@@ -178,12 +187,28 @@ export function useAudioRecorder(): AudioRecorderHandle {
     }
 
     setIsRecording(true)
+    setIsPaused(false)
     return { source: session.source, warnings: session.warnings }
   }
 
+  const pause = async (): Promise<AudioChunkPayload | null> => {
+    if (!ctxRef.current || !isRecording) return null
+    await ctxRef.current.suspend()
+    const remaining = flushNewAudio()
+    setIsRecording(false)
+    setIsPaused(true)
+    return remaining
+  }
+
+  const resume = async (): Promise<void> => {
+    if (!ctxRef.current || !isPaused) return
+    await ctxRef.current.resume()
+    setIsPaused(false)
+    setIsRecording(true)
+  }
+
   const stop = async (): Promise<AudioChunkPayload | null> => {
-    const hasNewAudio = totalCapturedSamplesRef.current > lastEmittedEndSampleRef.current
-    const remaining = hasNewAudio ? flushChunk() : null
+    const remaining = isRecording ? flushNewAudio() : null
     try {
       nodeRef.current?.port.close()
       nodeRef.current?.disconnect()
@@ -202,6 +227,7 @@ export function useAudioRecorder(): AudioRecorderHandle {
     onChunkRef.current = null
     setStream(null)
     setIsRecording(false)
+    setIsPaused(false)
     setCaptureSource(null)
     setCaptureWarnings([])
     return remaining
@@ -209,9 +235,12 @@ export function useAudioRecorder(): AudioRecorderHandle {
 
   return {
     start,
+    pause,
+    resume,
     stop,
     sampleRate: CHUNK_SAMPLE_RATE,
     isRecording,
+    isPaused,
     stream,
     captureSource,
     captureWarnings

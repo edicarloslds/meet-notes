@@ -34,9 +34,14 @@ export function Dashboard(): ReactElement {
   const [editingSegmentId, setEditingSegmentId] = useState<string | null>(null)
   const [segmentDraft, setSegmentDraft] = useState('')
   const [speakerDraft, setSpeakerDraft] = useState('')
+  const [findText, setFindText] = useState('')
+  const [replaceText, setReplaceText] = useState('')
+  const [replaceMsg, setReplaceMsg] = useState<string | null>(null)
   const [exportMsg, setExportMsg] = useState<string | null>(null)
+  const [exportMenuOpen, setExportMenuOpen] = useState(false)
   const [tickNow, setTickNow] = useState(() => Date.now())
   const tickIntervalRef = useRef<number | null>(null)
+  const exportMenuRef = useRef<HTMLDivElement | null>(null)
 
   const refresh = async (): Promise<void> => {
     const list = await window.distill.listMeetings()
@@ -123,6 +128,26 @@ export function Dashboard(): ReactElement {
       window.removeEventListener('scroll', close, true)
     }
   }, [pendingDeleteId])
+
+  useEffect(() => {
+    if (!exportMenuOpen) return
+    const close = (event: Event): void => {
+      const target = event.target as Node | null
+      if (target && exportMenuRef.current?.contains(target)) return
+      setExportMenuOpen(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setExportMenuOpen(false)
+    }
+    window.addEventListener('click', close)
+    window.addEventListener('keydown', closeOnEscape)
+    window.addEventListener('scroll', close, true)
+    return () => {
+      window.removeEventListener('click', close)
+      window.removeEventListener('keydown', closeOnEscape)
+      window.removeEventListener('scroll', close, true)
+    }
+  }, [exportMenuOpen])
 
   useEffect(() => {
     const hasActive = Object.values(progressByMeeting).some((s) =>
@@ -254,6 +279,56 @@ export function Dashboard(): ReactElement {
     clearSegmentEditing()
   }
 
+  const handleReplaceAll = async (): Promise<void> => {
+    if (!selected) return
+    const find = findText.trim()
+    if (!find) {
+      setReplaceMsg('Informe o texto que deseja encontrar.')
+      return
+    }
+
+    if (selected.transcript_segments?.length) {
+      let count = 0
+      const replacedSegments = selected.transcript_segments.map((segment) => {
+        const replaced = replaceAllLiteral(segment.text, find, replaceText)
+        count += replaced.count
+        return { ...segment, text: replaced.text }
+      })
+      if (count === 0) {
+        setReplaceMsg('Nenhuma ocorrência encontrada.')
+        return
+      }
+      await window.distill.saveMeeting({
+        ...selected,
+        transcript_segments: replacedSegments,
+        raw_transcript: rebuildTranscriptFromSegments(replacedSegments),
+        summary: '',
+        action_items: [],
+        summary_status: 'skipped',
+        summary_error: 'Resumo desatualizado após substituições na transcrição. Gere novamente.'
+      })
+      setReplaceMsg(`${count} ocorrência(s) substituída(s).`)
+      await refresh()
+      return
+    }
+
+    const replaced = replaceAllLiteral(selected.raw_transcript, find, replaceText)
+    if (replaced.count === 0) {
+      setReplaceMsg('Nenhuma ocorrência encontrada.')
+      return
+    }
+    await window.distill.saveMeeting({
+      ...selected,
+      raw_transcript: replaced.text,
+      summary: '',
+      action_items: [],
+      summary_status: 'skipped',
+      summary_error: 'Resumo desatualizado após substituições na transcrição. Gere novamente.'
+    })
+    setReplaceMsg(`${replaced.count} ocorrência(s) substituída(s).`)
+    await refresh()
+  }
+
   const saveSegmentEdit = async (segmentId: string): Promise<void> => {
     if (!selected?.transcript_segments?.length) return
     const nextSegments = selected.transcript_segments.map((segment) =>
@@ -291,10 +366,18 @@ export function Dashboard(): ReactElement {
 
   const handleExport = async (format: 'markdown' | 'text'): Promise<void> => {
     if (!selected) return
+    setExportMenuOpen(false)
     const result = await window.distill.exportMeeting(selected, format)
     if (result.canceled) return
     setExportMsg(`Exportado em ${result.path}`)
     setTimeout(() => setExportMsg(null), 3500)
+  }
+
+  const handleContinueMeeting = async (): Promise<void> => {
+    if (!selected || selected.status === 'processing') return
+    clearSegmentEditing()
+    setIsEditing(false)
+    await window.distill.continueMeeting(selected)
   }
 
   if (showWelcome === null) {
@@ -366,40 +449,7 @@ export function Dashboard(): ReactElement {
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-sm font-medium truncate flex-1">{m.title}</span>
-
-                  <div className="shrink-0 flex items-center gap-1">
-                    {(status === 'processing' || (regenerating && selectedId === m.id)) && (
-                      <span className="text-[10px] text-sky-700 bg-sky-100 rounded px-1.5 py-0.5 flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-pulse" />
-                        {regenerating && selectedId === m.id ? 'regenerando' : 'processando'}
-                      </span>
-                    )}
-                    {status === 'failed' && !isPendingDelete && (
-                      <span className="text-[10px] text-red-700 bg-red-100 rounded px-1.5 py-0.5">
-                        falhou
-                      </span>
-                    )}
-                    {status === 'ready' && m.synced === false && !isPendingDelete && (
-                      <span className="text-[10px] text-amber-600 bg-amber-50 rounded px-1.5 py-0.5">
-                        offline
-                      </span>
-                    )}
-                    {m.capture_source && !isPendingDelete && (
-                      <span className="text-[10px] text-slate-600 bg-slate-100 rounded px-1.5 py-0.5">
-                        {formatCaptureSource(m.capture_source)}
-                      </span>
-                    )}
-                    {status === 'ready' && m.summary_status === 'skipped' && !m.summary.trim() && !isPendingDelete && (
-                      <span className="text-[10px] text-sky-700 bg-sky-100 rounded px-1.5 py-0.5">
-                        sem resumo
-                      </span>
-                    )}
-                    {status === 'ready' && m.summary_status === 'failed' && !isPendingDelete && (
-                      <span className="text-[10px] text-amber-700 bg-amber-100 rounded px-1.5 py-0.5">
-                        resumo falhou
-                      </span>
-                    )}
-
+                  <div className="shrink-0">
                     {actionsDisabled && (
                       <button
                         type="button"
@@ -456,8 +506,43 @@ export function Dashboard(): ReactElement {
                     )}
                   </div>
                 </div>
-                <div className="text-xs text-slate-500 mt-1">
-                  {new Date(m.created_at).toLocaleString()}
+                <div className="mt-1 flex items-center justify-between gap-2">
+                  <div className="text-xs text-slate-500 truncate">
+                    {new Date(m.created_at).toLocaleString()}
+                  </div>
+                  <div className="shrink-0 flex flex-wrap items-center justify-end gap-1">
+                    {(status === 'processing' || (regenerating && selectedId === m.id)) && (
+                      <span className="text-[10px] text-sky-700 bg-sky-100 rounded px-1.5 py-0.5 flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-pulse" />
+                        {regenerating && selectedId === m.id ? 'regenerando' : 'processando'}
+                      </span>
+                    )}
+                    {status === 'failed' && !isPendingDelete && (
+                      <span className="text-[10px] text-red-700 bg-red-100 rounded px-1.5 py-0.5">
+                        falhou
+                      </span>
+                    )}
+                    {status === 'ready' && m.synced === false && !isPendingDelete && (
+                      <span className="text-[10px] text-amber-600 bg-amber-50 rounded px-1.5 py-0.5">
+                        offline
+                      </span>
+                    )}
+                    {m.capture_source && !isPendingDelete && (
+                      <span className="text-[10px] text-slate-600 bg-slate-100 rounded px-1.5 py-0.5">
+                        {formatCaptureSource(m.capture_source)}
+                      </span>
+                    )}
+                    {status === 'ready' && m.summary_status === 'skipped' && !m.summary.trim() && !isPendingDelete && (
+                      <span className="text-[10px] text-sky-700 bg-sky-100 rounded px-1.5 py-0.5">
+                        sem resumo
+                      </span>
+                    )}
+                    {status === 'ready' && m.summary_status === 'failed' && !isPendingDelete && (
+                      <span className="text-[10px] text-amber-700 bg-amber-100 rounded px-1.5 py-0.5">
+                        resumo falhou
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
             )
@@ -543,57 +628,133 @@ export function Dashboard(): ReactElement {
                 </header>
 
                 {selectedStatus === 'ready' && (
-                  <div className="flex items-center justify-between mb-8">
-                    <div className="inline-flex items-center gap-1 p-1 bg-slate-100 rounded-xl">
-                      <TabButton active={tab === 'summary'} onClick={() => { clearSegmentEditing(); setTab('summary') }}>
-                        Resumo
-                      </TabButton>
-                      <TabButton active={tab === 'transcript'} onClick={() => { clearSegmentEditing(); setTab('transcript') }}>
-                        Transcrição
-                      </TabButton>
-                      <TabButton active={tab === 'actions'} onClick={() => { clearSegmentEditing(); setTab('actions') }}>
-                        Itens de Ação
-                      </TabButton>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <button
-                        type="button"
-                        onClick={() => void handleExport('markdown')}
-                        className="text-sm text-slate-500 hover:text-slate-900"
-                      >
-                        Exportar .md
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleExport('text')}
-                        className="text-sm text-slate-500 hover:text-slate-900"
-                      >
-                        Exportar .txt
-                      </button>
-                      {tab === 'summary' && selected.summary && (
+                  <div className="mb-8 rounded-lg bg-slate-100/80 p-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="inline-flex min-w-0 items-center gap-1 rounded-md bg-white/60 p-0.5">
+                        <TabButton active={tab === 'summary'} onClick={() => { clearSegmentEditing(); setTab('summary') }}>
+                          Resumo
+                        </TabButton>
+                        <TabButton active={tab === 'transcript'} onClick={() => { clearSegmentEditing(); setTab('transcript') }}>
+                          Transcrição
+                        </TabButton>
+                        <TabButton active={tab === 'actions'} onClick={() => { clearSegmentEditing(); setTab('actions') }}>
+                          Itens de Ação
+                        </TabButton>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-end gap-1.5">
                         <button
-                          onClick={() => {
-                            void navigator.clipboard.writeText(selected.summary)
-                            setCopied(true)
-                            setTimeout(() => setCopied(false), 1500)
-                          }}
-                          className={`inline-flex items-center justify-center gap-1.5 text-sm transition-colors w-[140px] ${
-                            copied ? 'text-emerald-600' : 'text-slate-500 hover:text-slate-900'
-                          }`}
+                          type="button"
+                          onClick={() => void handleContinueMeeting()}
+                          aria-label="Continuar gravação"
+                          title="Continuar gravação"
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-slate-900 text-white shadow-sm transition hover:bg-slate-700"
                         >
-                          {copied ? (
-                            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M20 6L9 17l-5-5" />
-                            </svg>
-                          ) : (
-                            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <rect x="9" y="9" width="13" height="13" rx="2" />
-                              <path d="M5 15V5a2 2 0 0 1 2-2h10" />
-                            </svg>
-                          )}
-                          <span>{copied ? 'Copiado!' : 'Copiar resumo'}</span>
+                          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+                            <path d="M6 6.5v11l8-5.5-8-5.5z" />
+                            <path d="M16 6h2v12h-2z" />
+                            <path d="M20 6h2v12h-2z" />
+                          </svg>
                         </button>
-                      )}
+
+                        <div ref={exportMenuRef} className="relative">
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation()
+                            setExportMenuOpen((open) => !open)
+                          }}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-700 shadow-sm transition hover:border-slate-400 hover:bg-slate-50 hover:text-slate-950"
+                            aria-haspopup="menu"
+                            aria-expanded={exportMenuOpen}
+                            aria-label="Exportar"
+                            title="Exportar"
+                          >
+                            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <path d="M12 3v12" />
+                              <path d="M7 10l5 5 5-5" />
+                              <path d="M5 21h14" />
+                            </svg>
+                          </button>
+                          {exportMenuOpen && (
+                            <div
+                              role="menu"
+                              className="absolute right-0 top-full z-20 mt-2 w-56 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg ring-1 ring-slate-900/5"
+                            >
+                              <button
+                                type="button"
+                                role="menuitem"
+                                onClick={() => void handleExport('markdown')}
+                                className="flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50 hover:text-slate-950"
+                              >
+                                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-sky-50 text-sky-700">
+                                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                    <path d="M14 2v6h6" />
+                                    <path d="M8 13h8" />
+                                    <path d="M8 17h5" />
+                                  </svg>
+                                </span>
+                                <span className="min-w-0 flex-1">
+                                  <span className="block font-medium">Markdown</span>
+                                  <span className="block text-xs text-slate-500">Resumo formatado em .md</span>
+                                </span>
+                                <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-500">.md</span>
+                              </button>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                onClick={() => void handleExport('text')}
+                                className="flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50 hover:text-slate-950"
+                              >
+                                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-700">
+                                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                    <path d="M14 2v6h6" />
+                                    <path d="M8 12h8" />
+                                    <path d="M8 16h8" />
+                                    <path d="M8 20h4" />
+                                  </svg>
+                                </span>
+                                <span className="min-w-0 flex-1">
+                                  <span className="block font-medium">Texto simples</span>
+                                  <span className="block text-xs text-slate-500">Arquivo limpo em .txt</span>
+                                </span>
+                                <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-500">.txt</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        {tab === 'summary' && selected.summary && (
+                          <button
+                            type="button"
+                            aria-label={copied ? 'Resumo copiado' : 'Copiar resumo'}
+                            title={copied ? 'Resumo copiado' : 'Copiar resumo'}
+                            onClick={() => {
+                              void navigator.clipboard.writeText(selected.summary)
+                              setCopied(true)
+                              setTimeout(() => setCopied(false), 1500)
+                            }}
+                            className={`inline-flex h-8 w-8 items-center justify-center rounded-md border shadow-sm transition ${
+                              copied
+                                ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                : 'border-slate-300 bg-white text-slate-700 hover:border-slate-400 hover:bg-slate-50 hover:text-slate-950'
+                            }`}
+                          >
+                            {copied ? (
+                              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <path d="M20 6L9 17l-5-5" />
+                              </svg>
+                            ) : (
+                              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <rect x="9" y="9" width="13" height="13" rx="2" />
+                                <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+                              </svg>
+                            )}
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 )}
@@ -720,6 +881,45 @@ export function Dashboard(): ReactElement {
 
             {selectedStatus === 'ready' && !isEditing && tab === 'transcript' && (
               <section>
+                <div className="mb-5 rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
+                  <div className="flex flex-wrap items-end gap-3">
+                    <label className="min-w-[180px] flex-1 text-xs font-medium text-slate-600">
+                      Encontrar
+                      <input
+                        value={findText}
+                        onChange={(e) => {
+                          setFindText(e.target.value)
+                          setReplaceMsg(null)
+                        }}
+                        placeholder="Palavra ou trecho"
+                        className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100"
+                      />
+                    </label>
+                    <label className="min-w-[180px] flex-1 text-xs font-medium text-slate-600">
+                      Substituir por
+                      <input
+                        value={replaceText}
+                        onChange={(e) => {
+                          setReplaceText(e.target.value)
+                          setReplaceMsg(null)
+                        }}
+                        placeholder="Novo texto"
+                        className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100"
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => void handleReplaceAll()}
+                      disabled={!findText.trim()}
+                      className="h-9 rounded-md bg-slate-900 px-3 text-xs font-medium text-white shadow-sm transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                    >
+                      Substituir tudo
+                    </button>
+                  </div>
+                  {replaceMsg && (
+                    <div className="mt-2 text-xs text-slate-500">{replaceMsg}</div>
+                  )}
+                </div>
                 {selected.transcript_segments?.length ? (
                   <div className="space-y-4">
                     {selected.transcript_segments.map((segment) => (
@@ -964,6 +1164,21 @@ function splitTranscript(text: string): string[] {
     chunks.push(sentences.slice(i, i + size).join(' ').trim())
   }
   return chunks
+}
+
+function replaceAllLiteral(text: string, find: string, replacement: string): { text: string; count: number } {
+  if (!find) return { text, count: 0 }
+  let count = 0
+  const re = new RegExp(escapeRegExp(find), 'gi')
+  const next = text.replace(re, () => {
+    count++
+    return replacement
+  })
+  return { text: next, count }
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 function rebuildTranscriptFromSegments(segments: NonNullable<Meeting['transcript_segments']>): string {

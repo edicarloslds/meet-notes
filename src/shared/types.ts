@@ -1,4 +1,3 @@
-export type PillState = 'idle' | 'recording' | 'transcribing' | 'saving'
 export type AudioCaptureMode = 'auto' | 'system' | 'microphone' | 'mixed'
 export type AudioCaptureSource = 'system' | 'microphone' | 'mixed'
 export type SummaryStatus = 'complete' | 'skipped' | 'failed'
@@ -53,12 +52,15 @@ export interface MeetingDetectedPayload {
   detectedAt: string
   windowId: number
   bundleId?: string
+  continueMeeting?: Meeting
 }
 
 export interface ProcessAudioResult {
   transcript: string
   summary: string
   actionItems: ActionItem[]
+  summaryStatus?: SummaryStatus
+  summaryError?: string
 }
 
 export interface WhisperModelInfo {
@@ -153,14 +155,13 @@ export interface WhisperStatus {
 export const IpcChannels = {
   MeetingDetected: 'meeting:detected',
   MeetingEnded: 'meeting:ended',
-  PillStart: 'pill:start',
   PillStop: 'pill:stop',
-  PillStateChanged: 'pill:state-changed',
   ProcessAudio: 'audio:process',
   SaveMeeting: 'meeting:save',
   ListMeetings: 'meeting:list',
   SyncPending: 'meeting:sync-pending',
   SimulateMeeting: 'meeting:simulate',
+  ContinueMeeting: 'meeting:continue',
   DeleteMeeting: 'meeting:delete',
   RegenerateSummary: 'meeting:regenerate-summary',
   ExportMeeting: 'meeting:export',

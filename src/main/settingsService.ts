@@ -92,9 +92,3 @@ export function getSettingSync(key: SettingKey): any {
 export async function primeSettingsCache(): Promise<void> {
   await loadSettings()
 }
-
-export function getEffectiveSettings(): Record<SettingKey, any> {
-  const out = {} as Record<SettingKey, any>
-  for (const key of SETTINGS_KEYS) out[key] = getSettingSync(key)
-  return out
-}

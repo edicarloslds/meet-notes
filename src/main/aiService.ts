@@ -441,16 +441,6 @@ async function fileExists(p: string): Promise<boolean> {
   }
 }
 
-export function isWhisperNotReadyError(err: unknown): boolean {
-  if (!err || typeof err !== 'object') return false
-  const msg = (err as { message?: string }).message
-  return typeof msg === 'string' && msg.includes(WHISPER_NOT_READY_MARKER)
-}
-
-export function stripNotReadyMarker(msg: string): string {
-  return msg.replace(WHISPER_NOT_READY_MARKER, '').trim()
-}
-
 export function isAbortError(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false
   const e = err as { name?: string; code?: string }
@@ -556,12 +546,6 @@ export async function assertOllamaReady(): Promise<void> {
   }
 }
 
-export function isOllamaNotReadyError(err: unknown): boolean {
-  if (!err || typeof err !== 'object') return false
-  const msg = (err as { message?: string }).message
-  return typeof msg === 'string' && msg.includes(OLLAMA_NOT_READY_MARKER)
-}
-
 export async function assertWhisperReady(): Promise<void> {
   const status = await getWhisperStatus()
   if (!status.binAvailable) {
@@ -576,13 +560,17 @@ export async function assertWhisperReady(): Promise<void> {
   }
 }
 
+function cleanMarker(message: string | undefined, marker: string): string | undefined {
+  if (!message) return undefined
+  return message.replace(marker, '').trim() || undefined
+}
+
 export async function transcribeAndSummarize(
   audio: Buffer,
   onStage?: StageReporter,
   signal?: AbortSignal
 ): Promise<ProcessAudioResult> {
   await assertWhisperReady()
-  await assertOllamaReady()
 
   const dir = await mkdtemp(join(tmpdir(), 'distill-'))
   let wavPath: string
@@ -621,12 +609,25 @@ export async function transcribeAndSummarize(
 
     onStage?.('summarizing', 'active')
     try {
+      await assertOllamaReady()
       const { summary, actionItems } = await summarizeTranscript(transcript, signal)
       onStage?.('summarizing', 'done')
-      return { transcript, summary, actionItems }
+      return { transcript, summary, actionItems, summaryStatus: 'complete' }
     } catch (err) {
-      stageErr('summarizing', err)
-      throw err
+      if (isAbortError(err) || signal?.aborted) throw err
+      const message = (err as Error).message
+      const summaryStatus = message.includes(OLLAMA_NOT_READY_MARKER) ? 'skipped' : 'failed'
+      const summaryError =
+        cleanMarker(message, OLLAMA_NOT_READY_MARKER) ??
+        'Nao foi possivel gerar o resumo desta reuniao.'
+      onStage?.('summarizing', 'failed', { error: summaryError })
+      return {
+        transcript,
+        summary: '',
+        actionItems: [],
+        summaryStatus,
+        summaryError
+      }
     }
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => undefined)

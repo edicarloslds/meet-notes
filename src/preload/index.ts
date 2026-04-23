@@ -71,6 +71,8 @@ const api = {
     ipcRenderer.invoke(IpcChannels.SetPillPosition, x, y),
   simulateMeeting: (title?: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannels.SimulateMeeting, title),
+  continueMeeting: (meeting: Meeting): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.ContinueMeeting, meeting),
   deleteMeeting: (id: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannels.DeleteMeeting, id),
   exportMeeting: (meeting: Meeting, format: MeetingExportFormat): Promise<{ canceled: boolean; path?: string }> =>
