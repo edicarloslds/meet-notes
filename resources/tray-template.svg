@@ -1,10 +1,18 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22">
-  <g fill="black">
-    <rect x="2"  y="9"  width="2" height="4"  rx="1"/>
-    <rect x="5"  y="7"  width="2" height="8"  rx="1"/>
-    <rect x="8"  y="4"  width="2" height="14" rx="1"/>
-    <rect x="11" y="2"  width="2" height="18" rx="1"/>
-    <rect x="14" y="4"  width="2" height="14" rx="1"/>
-    <rect x="17" y="7"  width="2" height="8"  rx="1"/>
-  </g>
+  <defs>
+    <mask id="audio-cutout">
+      <rect width="22" height="22" fill="black"/>
+      <path
+        d="M5.2 5.2h11.6A4.2 4.2 0 0 1 21 9.4v1.2a4.2 4.2 0 0 1-4.2 4.2H11l-3.7 2.8v-2.8H5.2A4.2 4.2 0 0 1 1 10.6V9.4a4.2 4.2 0 0 1 4.2-4.2Z"
+        fill="white"
+      />
+      <g fill="black">
+        <rect x="6" y="8.7" width="1.8" height="2.6" rx="0.9"/>
+        <rect x="9" y="7.4" width="1.8" height="5.2" rx="0.9"/>
+        <rect x="12" y="6.6" width="1.8" height="6.8" rx="0.9"/>
+        <rect x="15" y="8" width="1.8" height="4" rx="0.9"/>
+      </g>
+    </mask>
+  </defs>
+  <rect width="22" height="22" fill="black" mask="url(#audio-cutout)"/>
 </svg>

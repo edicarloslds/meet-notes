@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, screen, shell, Tray } from 'electron'
+import { existsSync, readFileSync } from 'fs'
 import { writeFile } from 'fs/promises'
 import { join } from 'path'
 import {
@@ -634,7 +635,13 @@ function createTray(): void {
   const iconPath = app.isPackaged
     ? join(process.resourcesPath, 'trayTemplate.png')
     : join(__dirname, '../../resources/trayTemplate.png')
+  const icon2xPath = app.isPackaged
+    ? join(process.resourcesPath, 'trayTemplate@2x.png')
+    : join(__dirname, '../../resources/trayTemplate@2x.png')
   const icon = nativeImage.createFromPath(iconPath)
+  if (existsSync(icon2xPath)) {
+    icon.addRepresentation({ scaleFactor: 2, buffer: readFileSync(icon2xPath) })
+  }
   icon.setTemplateImage(true)
   tray = new Tray(icon)
   tray.setToolTip('Distill')
