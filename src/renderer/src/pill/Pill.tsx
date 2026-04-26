@@ -146,7 +146,7 @@ export function Pill(): ReactElement {
       setElapsed(Math.floor(offsetMs / 1000))
       setPartCount(offsetMs > 0 ? 2 : 1)
       if (continuing?.title) setTitle(continuing.title)
-      await window.distill.startMeetingChunks(meetingId)
+      await window.distill.startMeetingChunks(meetingId, { engine: 'whisper' })
       const started = await start((chunk) => {
         void window.distill.submitAudioChunk(meetingId, offsetAudioChunk(chunk, chunkOffsetMsRef.current), sampleRate)
       }, selectedMode)

@@ -32,7 +32,8 @@ export default defineConfig({
       rollupOptions: {
         input: {
           dashboard: resolve(__dirname, 'src/renderer/dashboard.html'),
-          pill: resolve(__dirname, 'src/renderer/pill.html')
+          pill: resolve(__dirname, 'src/renderer/pill.html'),
+          live: resolve(__dirname, 'src/renderer/live.html')
         }
       }
     }

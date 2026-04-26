@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>com.edicarlos.distill.apple-speech-helper</string>
+  <key>CFBundleName</key>
+  <string>Distill Apple Speech Helper</string>
+  <key>CFBundleExecutable</key>
+  <string>apple-speech-helper</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>O Distill usa o Apple Speech para transcrever reuniões ao vivo.</string>
+</dict>
+</plist>

@@ -8,11 +8,12 @@
   "packageManager": "pnpm@10.7.1",
   "scripts": {
     "dev": "electron-vite dev",
-    "build": "electron-vite build",
+    "build": "pnpm build:apple-speech && electron-vite build",
+    "build:apple-speech": "node scripts/build-apple-speech-helper.mjs",
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "icons": "node scripts/build-icons.mjs",
-    "package": "electron-vite build && electron-builder --mac"
+    "package": "pnpm build:apple-speech && electron-vite build && electron-builder --mac"
   },
   "build": {
     "appId": "com.edicarlos.distill",
@@ -36,6 +37,13 @@
       {
         "from": "resources/trayTemplate@2x.png",
         "to": "trayTemplate@2x.png"
+      },
+      {
+        "from": "resources/bin/apple-speech-helper",
+        "to": "bin/apple-speech-helper",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "mac": {
@@ -47,6 +55,7 @@
       "entitlementsInherit": "build/entitlements.mac.plist",
       "extendInfo": {
         "NSMicrophoneUsageDescription": "O Distill captura áudio para gerar transcrições e resumos de reuniões.",
+        "NSSpeechRecognitionUsageDescription": "O Distill usa reconhecimento de fala para transcrever reuniões ao vivo.",
         "NSAppleEventsUsageDescription": "O Distill detecta janelas de reuniões ativas para iniciar gravação automaticamente.",
         "NSSystemAdministrationUsageDescription": "O Distill identifica quando um app de reunião está em foco."
       }

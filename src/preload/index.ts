@@ -7,6 +7,11 @@ import {
   Meeting,
   MeetingExportFormat,
   MeetingDetectedPayload,
+  LiveTranscriptionEvent,
+  LiveTranslationStatus,
+  LiveTranscriptSession,
+  LiveTranscriptionOptions,
+  LiveTranslationResult,
   MeetingProgressEvent,
   ModelDownloadProgress,
   OllamaStatus,
@@ -32,6 +37,20 @@ const api = {
       ipcRenderer.removeListener(IpcChannels.MeetingProgress, listener)
     }
   },
+  onLiveTranscription: (cb: (p: LiveTranscriptionEvent) => void): (() => void) => {
+    const listener = (_: unknown, payload: LiveTranscriptionEvent): void => cb(payload)
+    ipcRenderer.on(IpcChannels.LiveTranscription, listener)
+    return (): void => {
+      ipcRenderer.removeListener(IpcChannels.LiveTranscription, listener)
+    }
+  },
+  onLiveTranscriptSession: (cb: (p: LiveTranscriptSession) => void): (() => void) => {
+    const listener = (_: unknown, payload: LiveTranscriptSession): void => cb(payload)
+    ipcRenderer.on(IpcChannels.LiveTranscriptSession, listener)
+    return (): void => {
+      ipcRenderer.removeListener(IpcChannels.LiveTranscriptSession, listener)
+    }
+  },
   onMeetingEnded: (cb: () => void): (() => void) => {
     const listener = (): void => cb()
     ipcRenderer.on(IpcChannels.MeetingEnded, listener)
@@ -44,10 +63,12 @@ const api = {
   processAndSave: (placeholder: Meeting, audio: ArrayBuffer): void => {
     ipcRenderer.send(IpcChannels.ProcessAndSave, placeholder, audio)
   },
-  startMeetingChunks: (meetingId: string): Promise<void> =>
-    ipcRenderer.invoke(IpcChannels.StartMeetingChunks, meetingId),
+  startMeetingChunks: (meetingId: string, options?: LiveTranscriptionOptions): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.StartMeetingChunks, meetingId, options),
   submitAudioChunk: (meetingId: string, chunk: AudioChunkPayload, sampleRate: number): Promise<void> =>
     ipcRenderer.invoke(IpcChannels.SubmitAudioChunk, meetingId, chunk, sampleRate),
+  submitLiveAudioFrame: (meetingId: string, chunk: AudioChunkPayload, sampleRate: number): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.SubmitLiveAudioFrame, meetingId, chunk, sampleRate),
   abortMeetingChunks: (meetingId: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannels.AbortMeetingChunks, meetingId),
   finalizeMeeting: (placeholder: Meeting, remaining: AudioChunkPayload | null, sampleRate: number): void => {
@@ -63,6 +84,16 @@ const api = {
   },
   resetPillPosition: (): Promise<void> =>
     ipcRenderer.invoke(IpcChannels.ResetPillPosition),
+  openLiveTranscript: (session?: LiveTranscriptSession): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.OpenLiveTranscript, session),
+  translateLiveText: (
+    text: string,
+    sourceLocale: string,
+    targetLocale: string
+  ): Promise<LiveTranslationResult> =>
+    ipcRenderer.invoke(IpcChannels.TranslateLiveText, text, sourceLocale, targetLocale),
+  getLiveTranslationStatus: (): Promise<LiveTranslationStatus> =>
+    ipcRenderer.invoke(IpcChannels.GetLiveTranslationStatus),
   setPillCompact: (compact: boolean): Promise<void> =>
     ipcRenderer.invoke(IpcChannels.SetPillCompact, compact),
   getPillPosition: (): Promise<{ x: number; y: number } | null> =>

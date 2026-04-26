@@ -1,5 +1,7 @@
 export type AudioCaptureMode = 'auto' | 'system' | 'microphone' | 'mixed'
 export type AudioCaptureSource = 'system' | 'microphone' | 'mixed'
+export type TranscriptionEngine = 'whisper' | 'apple-speech'
+export type LiveTranslationProvider = 'libretranslate' | 'local-opus'
 export type SummaryStatus = 'complete' | 'skipped' | 'failed'
 
 export interface AudioChunkPayload {
@@ -110,6 +112,43 @@ export interface MeetingProgressEvent {
   progress?: number
 }
 
+export interface LiveTranscriptionEvent {
+  meetingId: string
+  text: string
+  isFinal: boolean
+  engine: TranscriptionEngine
+  at: number
+  error?: string
+}
+
+export interface LiveTranscriptSession {
+  meetingId: string
+  title: string
+  transcript: string
+  startedAt: number
+  sourceLocale?: string
+  targetLocale?: string
+}
+
+export interface LiveTranscriptionOptions {
+  engine?: TranscriptionEngine
+  appleSpeechLocale?: string
+  appleSpeechRequiresOnDevice?: boolean
+}
+
+export interface LiveTranslationResult {
+  translatedText: string
+  error?: string
+  provider?: LiveTranslationProvider
+}
+
+export interface LiveTranslationStatus {
+  provider: LiveTranslationProvider
+  host: string
+  reachable: boolean
+  error?: string
+}
+
 export interface PendingMeta {
   attempts: number
   nextAttemptAt: number
@@ -125,6 +164,13 @@ export interface AppSettings {
   whisperBin?: string
   whisperModel?: string
   whisperLanguage?: string
+  transcriptionEngine?: TranscriptionEngine
+  appleSpeechLocale?: string
+  appleSpeechRequiresOnDevice?: boolean
+  liveTranslationProvider?: LiveTranslationProvider
+  libreTranslateHost?: string
+  libreTranslateApiKey?: string
+  localOpusHost?: string
   captureMode?: AudioCaptureMode
   pillCompact?: boolean
   pillX?: number
@@ -166,12 +212,17 @@ export const IpcChannels = {
   RegenerateSummary: 'meeting:regenerate-summary',
   ExportMeeting: 'meeting:export',
   ResetPillPosition: 'pill:reset-position',
+  OpenLiveTranscript: 'pill:open-live-transcript',
   SetPillCompact: 'pill:set-compact',
   GetPillPosition: 'pill:get-position',
   SetPillPosition: 'pill:set-position',
   ProcessAndSave: 'audio:process-and-save',
   CancelProcessing: 'meeting:cancel-processing',
   MeetingProgress: 'meeting:progress',
+  LiveTranscription: 'meeting:live-transcription',
+  LiveTranscriptSession: 'meeting:live-session',
+  TranslateLiveText: 'meeting:translate-live-text',
+  GetLiveTranslationStatus: 'meeting:live-translation-status',
   GetSettings: 'settings:get',
   SaveSettings: 'settings:save',
   ListWhisperModels: 'models:list',
@@ -185,6 +236,7 @@ export const IpcChannels = {
   OpenSystemSettings: 'system:open-settings',
   StartMeetingChunks: 'audio:start-chunks',
   SubmitAudioChunk: 'audio:submit-chunk',
+  SubmitLiveAudioFrame: 'audio:submit-live-frame',
   FinalizeMeeting: 'audio:finalize-meeting',
   AbortMeetingChunks: 'audio:abort-chunks'
 } as const

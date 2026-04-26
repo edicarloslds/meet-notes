@@ -16,8 +16,10 @@ import {
   StageStatus,
   SystemSettingsSection
 } from '../shared/types'
-import type { TranscriptSegment } from '../shared/types'
+import type { LiveTranscriptSession, LiveTranscriptionEvent, LiveTranscriptionOptions, TranscriptSegment, TranscriptionEngine } from '../shared/types'
+import { CHUNK_SAMPLE_RATE } from '../shared/types'
 import { startMeetingWatcher, stopMeetingWatcher } from './meetingWatcher'
+import { AppleSpeechSession } from './appleSpeechService'
 import {
   assertOllamaReady,
   assertWhisperReady,
@@ -29,6 +31,7 @@ import {
   transcribeAndSummarize,
   transcribePcmChunk
 } from './aiService'
+import { getLiveTranslationStatus, translateLiveText } from './liveTranslationService'
 import {
   cleanupStaleProcessing,
   deleteMeeting,
@@ -50,19 +53,21 @@ import {
 
 let dashboardWindow: BrowserWindow | null = null
 let pillWindow: BrowserWindow | null = null
+let liveTranscriptWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let isQuitting = false
 let pillPositionSaveTimer: ReturnType<typeof setTimeout> | null = null
 let suppressPillMovePersistence = false
 let promptInFlightForWindowId: number | null = null
 let dismissedMeetingWindowId: number | null = null
+let activeLiveTranscriptSession: LiveTranscriptSession | null = null
 
 interface PillBounds {
   width: number
   height: number
 }
 
-const PILL_EXPANDED_BOUNDS: PillBounds = { width: 500, height: 64 }
+const PILL_EXPANDED_BOUNDS: PillBounds = { width: 520, height: 64 }
 const PILL_COMPACT_BOUNDS: PillBounds = { width: 164, height: 44 }
 const PILL_MARGIN = 32
 const PILL_SNAP_THRESHOLD = 44
@@ -305,6 +310,69 @@ function openDashboard(): void {
   }
 }
 
+function getDefaultLiveTranscriptSession(): LiveTranscriptSession {
+  return {
+    meetingId: '',
+    title: 'Transcrição ao vivo',
+    transcript: '',
+    startedAt: Date.now(),
+    sourceLocale: 'en-US',
+    targetLocale: 'pt-BR'
+  }
+}
+
+function createLiveTranscriptWindow(session: LiveTranscriptSession): void {
+  liveTranscriptWindow = new BrowserWindow({
+    width: 520,
+    height: 680,
+    minWidth: 420,
+    minHeight: 420,
+    show: false,
+    title: 'Distill Live',
+    titleBarStyle: 'hiddenInset',
+    alwaysOnTop: true,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: false,
+      contextIsolation: true
+    }
+  })
+
+  liveTranscriptWindow.once('ready-to-show', () => liveTranscriptWindow?.show())
+  liveTranscriptWindow.on('closed', () => {
+    liveTranscriptWindow = null
+  })
+  liveTranscriptWindow.webContents.setWindowOpenHandler((details) => {
+    shell.openExternal(details.url)
+    return { action: 'deny' }
+  })
+
+  const sendSession = (): void => {
+    if (!liveTranscriptWindow || liveTranscriptWindow.isDestroyed()) return
+    liveTranscriptWindow.webContents.send(IpcChannels.LiveTranscriptSession, session)
+  }
+  liveTranscriptWindow.webContents.once('did-finish-load', sendSession)
+
+  if (process.env.ELECTRON_RENDERER_URL) {
+    liveTranscriptWindow.loadURL(`${process.env.ELECTRON_RENDERER_URL}/live.html`)
+  } else {
+    liveTranscriptWindow.loadFile(join(__dirname, '../renderer/live.html'))
+  }
+}
+
+function openLiveTranscriptWindow(session: LiveTranscriptSession): void {
+  activeLiveTranscriptSession = session
+  if (!liveTranscriptWindow || liveTranscriptWindow.isDestroyed()) {
+    createLiveTranscriptWindow(session)
+    return
+  }
+
+  if (liveTranscriptWindow.isMinimized()) liveTranscriptWindow.restore()
+  liveTranscriptWindow.show()
+  liveTranscriptWindow.focus()
+  liveTranscriptWindow.webContents.send(IpcChannels.LiveTranscriptSession, session)
+}
+
 function createPillWindow(): void {
   if (pillWindow && !pillWindow.isDestroyed()) return
 
@@ -443,10 +511,13 @@ const processingJobs = new Map<string, AbortController>()
 
 interface ChunkJob {
   controller: AbortController
+  engine: TranscriptionEngine
   transcript: string
   segments: TranscriptSegment[]
   queue: Promise<void>
   cancelled: boolean
+  appleSession?: AppleSpeechSession
+  lastAudioEndMs?: number
 }
 const chunkJobs = new Map<string, ChunkJob>()
 
@@ -467,6 +538,60 @@ function emitProgress(
   if (dashboardWindow && !dashboardWindow.isDestroyed()) {
     dashboardWindow.webContents.send(IpcChannels.MeetingProgress, payload)
   }
+}
+
+function emitLiveTranscription(payload: LiveTranscriptionEvent): void {
+  if (activeLiveTranscriptSession?.meetingId === payload.meetingId) {
+    activeLiveTranscriptSession = {
+      ...activeLiveTranscriptSession,
+      transcript: payload.text
+    }
+  }
+  if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+    dashboardWindow.webContents.send(IpcChannels.LiveTranscription, payload)
+  }
+  if (pillWindow && !pillWindow.isDestroyed()) {
+    pillWindow.webContents.send(IpcChannels.LiveTranscription, payload)
+  }
+  if (liveTranscriptWindow && !liveTranscriptWindow.isDestroyed()) {
+    liveTranscriptWindow.webContents.send(IpcChannels.LiveTranscription, payload)
+  }
+}
+
+function resolveTranscriptionEngine(options?: LiveTranscriptionOptions): TranscriptionEngine {
+  if (options?.engine === 'apple-speech') return 'apple-speech'
+  if (options?.engine === 'whisper') return 'whisper'
+  return getSettingSync('transcriptionEngine') === 'apple-speech' ? 'apple-speech' : 'whisper'
+}
+
+function resolveAppleSpeechLocale(options?: LiveTranscriptionOptions): string {
+  if (typeof options?.appleSpeechLocale === 'string' && options.appleSpeechLocale.trim()) {
+    return options.appleSpeechLocale.trim()
+  }
+  const configured = getSettingSync('appleSpeechLocale')
+  if (typeof configured === 'string' && configured.trim()) return configured.trim()
+
+  const whisperLanguage = getSettingSync('whisperLanguage')
+  switch (whisperLanguage) {
+    case 'en':
+      return 'en-US'
+    case 'es':
+      return 'es-ES'
+    case 'pt':
+    default:
+      return 'pt-BR'
+  }
+}
+
+function resolveAppleSpeechContextualStrings(): string[] {
+  const raw = getSettingSync('transcriptGlossary')
+  if (typeof raw !== 'string') return []
+  return raw
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line.split(/[:=]/)[0]?.trim() ?? '')
+    .filter(Boolean)
 }
 
 function cleanMarker(message: string | undefined, marker: string): string | undefined {
@@ -630,6 +755,10 @@ function startManualRecording(): void {
   showPill('Gravação manual')
 }
 
+function startLiveTranscription(): void {
+  openLiveTranscriptWindow(getDefaultLiveTranscriptSession())
+}
+
 function createTray(): void {
   if (tray) return
   const iconPath = app.isPackaged
@@ -649,6 +778,7 @@ function createTray(): void {
     const menu = Menu.buildFromTemplate([
       { label: 'Abrir Distill', click: () => openDashboard() },
       { label: 'Iniciar gravação', accelerator: 'CommandOrControl+Shift+R', click: () => startManualRecording() },
+      { label: 'Transcrição ao vivo', accelerator: 'CommandOrControl+Shift+L', click: () => startLiveTranscription() },
       { type: 'separator' },
       { label: 'Sair', click: () => { isQuitting = true; app.quit() } }
     ])
@@ -666,6 +796,10 @@ app.whenReady().then(async () => {
   const recordingShortcut = 'CommandOrControl+Shift+R'
   if (!globalShortcut.register(recordingShortcut, () => startManualRecording())) {
     console.warn(`Falha ao registrar atalho ${recordingShortcut}`)
+  }
+  const liveShortcut = 'CommandOrControl+Shift+L'
+  if (!globalShortcut.register(liveShortcut, () => startLiveTranscription())) {
+    console.warn(`Falha ao registrar atalho ${liveShortcut}`)
   }
 
   startMeetingWatcher({ onDetected: handleDetected, onEnded: handleEnded })
@@ -750,6 +884,7 @@ app.whenReady().then(async () => {
     if (chunkJob) {
       chunkJob.cancelled = true
       chunkJob.controller.abort()
+      chunkJob.appleSession?.dispose()
     }
     const controller = processingJobs.get(id)
     if (controller) {
@@ -763,20 +898,60 @@ app.whenReady().then(async () => {
     }
   })
 
-  ipcMain.handle(IpcChannels.StartMeetingChunks, async (_e, meetingId: string) => {
-    await assertWhisperReady()
+  ipcMain.handle(IpcChannels.StartMeetingChunks, async (_e, meetingId: string, options?: LiveTranscriptionOptions) => {
+    const engine = resolveTranscriptionEngine(options)
+    if (engine === 'whisper') {
+      await assertWhisperReady()
+    }
     const existing = chunkJobs.get(meetingId)
     if (existing) {
       existing.cancelled = true
       existing.controller.abort()
+      existing.appleSession?.dispose()
     }
-    chunkJobs.set(meetingId, {
+    const job: ChunkJob = {
       controller: new AbortController(),
+      engine,
       transcript: '',
       segments: [],
       queue: Promise.resolve(),
       cancelled: false
-    })
+    }
+    chunkJobs.set(meetingId, job)
+
+    if (engine === 'apple-speech') {
+      const session = new AppleSpeechSession({
+        meetingId,
+        locale: resolveAppleSpeechLocale(options),
+        requiresOnDevice:
+          options?.appleSpeechRequiresOnDevice ?? (getSettingSync('appleSpeechRequiresOnDevice') !== false),
+        contextualStrings: resolveAppleSpeechContextualStrings(),
+        onResult: (event) => {
+          const activeJob = chunkJobs.get(meetingId)
+          if (!activeJob || activeJob.cancelled) return
+          activeJob.transcript = event.text
+          emitLiveTranscription(event)
+        },
+        onError: (message) => {
+          emitLiveTranscription({
+            meetingId,
+            text: job.transcript,
+            isFinal: false,
+            engine: 'apple-speech',
+            at: Date.now(),
+            error: message
+          })
+        }
+      })
+      job.appleSession = session
+      try {
+        await session.start(CHUNK_SAMPLE_RATE)
+      } catch (err) {
+        chunkJobs.delete(meetingId)
+        session.dispose()
+        throw err
+      }
+    }
   })
 
   ipcMain.handle(
@@ -784,6 +959,7 @@ app.whenReady().then(async () => {
     async (_e, meetingId: string, chunk: AudioChunkPayload, sampleRate: number) => {
       const job = chunkJobs.get(meetingId)
       if (!job || job.cancelled) return
+      if (job.engine === 'apple-speech') return
       const int16 = new Int16Array(chunk.pcm)
       job.queue = job.queue.then(async () => {
         if (job.cancelled || job.controller.signal.aborted) return
@@ -807,11 +983,22 @@ app.whenReady().then(async () => {
     }
   )
 
+  ipcMain.handle(
+    IpcChannels.SubmitLiveAudioFrame,
+    async (_e, meetingId: string, chunk: AudioChunkPayload, sampleRate: number) => {
+      const job = chunkJobs.get(meetingId)
+      if (!job || job.cancelled || job.engine !== 'apple-speech') return
+      job.lastAudioEndMs = Math.max(job.lastAudioEndMs ?? 0, chunk.endMs)
+      await job.appleSession?.appendAudio(chunk, sampleRate)
+    }
+  )
+
   ipcMain.handle(IpcChannels.AbortMeetingChunks, async (_e, meetingId: string) => {
     const job = chunkJobs.get(meetingId)
     if (!job) return
     job.cancelled = true
     job.controller.abort()
+    job.appleSession?.dispose()
     chunkJobs.delete(meetingId)
   })
 
@@ -824,6 +1011,7 @@ app.whenReady().then(async () => {
           chunkJobs.get(meetingId) ??
           ({
             controller: new AbortController(),
+            engine: resolveTranscriptionEngine(),
             transcript: '',
             segments: [],
             queue: Promise.resolve(),
@@ -837,7 +1025,26 @@ app.whenReady().then(async () => {
         await saveMeeting({ ...placeholder, status: 'processing' }).catch(() => undefined)
 
         try {
-          if (remainingChunk && remainingChunk.pcm.byteLength > 0) {
+          if (job.engine === 'apple-speech') {
+            if (remainingChunk && remainingChunk.pcm.byteLength > 0) {
+              job.lastAudioEndMs = Math.max(job.lastAudioEndMs ?? 0, remainingChunk.endMs)
+              await job.appleSession?.appendAudio(remainingChunk, sampleRate)
+            }
+            emitProgress(meetingId, 'transcribing', 'active')
+            failedStage = 'transcribing'
+            await job.queue
+            await job.appleSession?.finish()
+            if (job.transcript.trim() && job.segments.length === 0) {
+              job.segments = [
+                {
+                  id: `${meetingId}-apple-speech`,
+                  startMs: 0,
+                  endMs: job.lastAudioEndMs ?? 0,
+                  text: job.transcript
+                }
+              ]
+            }
+          } else if (remainingChunk && remainingChunk.pcm.byteLength > 0) {
             const int16 = new Int16Array(remainingChunk.pcm)
             emitProgress(meetingId, 'transcribing', 'active')
             failedStage = 'transcribing'
@@ -951,6 +1158,29 @@ app.whenReady().then(async () => {
   ipcMain.handle(IpcChannels.ResetPillPosition, async () => {
     await resetPillPosition()
   })
+  ipcMain.handle(IpcChannels.OpenLiveTranscript, async (_e, session?: LiveTranscriptSession) => {
+    const next = session && typeof session === 'object' ? session : getDefaultLiveTranscriptSession()
+    openLiveTranscriptWindow({
+      meetingId: typeof next.meetingId === 'string' ? next.meetingId : '',
+      title: typeof next.title === 'string' ? next.title : 'Transcrição ao vivo',
+      transcript: typeof next.transcript === 'string' ? next.transcript : '',
+      startedAt: typeof next.startedAt === 'number' ? next.startedAt : Date.now(),
+      sourceLocale: typeof next.sourceLocale === 'string' ? next.sourceLocale : 'en-US',
+      targetLocale: typeof next.targetLocale === 'string' ? next.targetLocale : 'pt-BR'
+    })
+  })
+  ipcMain.handle(
+    IpcChannels.TranslateLiveText,
+    async (_e, text: string, sourceLocale: string, targetLocale: string) => {
+      try {
+        const result = await translateLiveText(text, sourceLocale, targetLocale)
+        return result
+      } catch (err) {
+        return { translatedText: '', error: (err as Error).message }
+      }
+    }
+  )
+  ipcMain.handle(IpcChannels.GetLiveTranslationStatus, async () => getLiveTranslationStatus())
   ipcMain.handle(IpcChannels.SetPillCompact, async (_e, compact: boolean) => {
     await setPillCompact(compact)
   })

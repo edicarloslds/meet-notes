@@ -10,6 +10,8 @@ import {
 const CHUNK_SAMPLES = CHUNK_SAMPLE_RATE * CHUNK_WINDOW_SECONDS
 const CHUNK_OVERLAP_SECONDS = 4
 const CHUNK_OVERLAP_SAMPLES = CHUNK_SAMPLE_RATE * CHUNK_OVERLAP_SECONDS
+const LIVE_FRAME_SECONDS = 1
+const LIVE_FRAME_SAMPLES = CHUNK_SAMPLE_RATE * LIVE_FRAME_SECONDS
 
 function getWorkletUrl(): string {
   return new URL('pcm-worklet.js', document.baseURI).href
@@ -18,7 +20,8 @@ function getWorkletUrl(): string {
 export interface AudioRecorderHandle {
   start: (
     onChunk: (chunk: AudioChunkPayload) => void,
-    mode?: AudioCaptureMode
+    mode?: AudioCaptureMode,
+    onLiveFrame?: (chunk: AudioChunkPayload) => void
   ) => Promise<{ source: AudioCaptureSource; warnings: string[] }>
   pause: () => Promise<AudioChunkPayload | null>
   resume: () => Promise<void>
@@ -93,10 +96,14 @@ export function useAudioRecorder(): AudioRecorderHandle {
   const sinkRef = useRef<GainNode | null>(null)
   const sourceRefs = useRef<MediaStreamAudioSourceNode[]>([])
   const partsRef = useRef<Float32Array[]>([])
+  const livePartsRef = useRef<Float32Array[]>([])
   const samplesRef = useRef(0)
+  const liveSamplesRef = useRef(0)
   const onChunkRef = useRef<((chunk: AudioChunkPayload) => void) | null>(null)
+  const onLiveFrameRef = useRef<((chunk: AudioChunkPayload) => void) | null>(null)
   const totalCapturedSamplesRef = useRef(0)
   const bufferStartSampleRef = useRef(0)
+  const liveBufferStartSampleRef = useRef(0)
   const lastEmittedEndSampleRef = useRef(0)
   const [isRecording, setIsRecording] = useState(false)
   const [isPaused, setIsPaused] = useState(false)
@@ -134,15 +141,36 @@ export function useAudioRecorder(): AudioRecorderHandle {
     return hasNewAudio ? flushChunk() : null
   }
 
+  const flushLiveFrame = (): AudioChunkPayload | null => {
+    if (liveSamplesRef.current === 0) return null
+    const startSample = liveBufferStartSampleRef.current
+    const endSample = startSample + liveSamplesRef.current
+    const int16 = floatToInt16(livePartsRef.current, liveSamplesRef.current)
+    const payload: AudioChunkPayload = {
+      pcm: int16.buffer as ArrayBuffer,
+      startMs: samplesToMs(startSample),
+      endMs: samplesToMs(endSample)
+    }
+    livePartsRef.current = []
+    liveSamplesRef.current = 0
+    liveBufferStartSampleRef.current = endSample
+    return payload
+  }
+
   const start = async (
     onChunk: (chunk: AudioChunkPayload) => void,
-    mode: AudioCaptureMode = 'auto'
+    mode: AudioCaptureMode = 'auto',
+    onLiveFrame?: (chunk: AudioChunkPayload) => void
   ): Promise<{ source: AudioCaptureSource; warnings: string[] }> => {
     onChunkRef.current = onChunk
+    onLiveFrameRef.current = onLiveFrame ?? null
     partsRef.current = []
+    livePartsRef.current = []
     samplesRef.current = 0
+    liveSamplesRef.current = 0
     totalCapturedSamplesRef.current = 0
     bufferStartSampleRef.current = 0
+    liveBufferStartSampleRef.current = 0
     lastEmittedEndSampleRef.current = 0
 
     const session = await createCaptureSession(mode)
@@ -177,12 +205,22 @@ export function useAudioRecorder(): AudioRecorderHandle {
 
     node.port.onmessage = (ev: MessageEvent<Float32Array>): void => {
       const data = ev.data
+      const dataStartSample = totalCapturedSamplesRef.current
       partsRef.current.push(data)
       samplesRef.current += data.length
+      if (onLiveFrameRef.current) {
+        if (liveSamplesRef.current === 0) liveBufferStartSampleRef.current = dataStartSample
+        livePartsRef.current.push(data)
+        liveSamplesRef.current += data.length
+      }
       totalCapturedSamplesRef.current += data.length
       if (samplesRef.current >= CHUNK_SAMPLES) {
         const chunk = flushChunk(CHUNK_OVERLAP_SAMPLES)
         if (chunk) onChunkRef.current?.(chunk)
+      }
+      if (onLiveFrameRef.current && liveSamplesRef.current >= LIVE_FRAME_SAMPLES) {
+        const liveFrame = flushLiveFrame()
+        if (liveFrame) onLiveFrameRef.current(liveFrame)
       }
     }
 
@@ -194,6 +232,8 @@ export function useAudioRecorder(): AudioRecorderHandle {
   const pause = async (): Promise<AudioChunkPayload | null> => {
     if (!ctxRef.current || !isRecording) return null
     await ctxRef.current.suspend()
+    const liveFrame = flushLiveFrame()
+    if (liveFrame) onLiveFrameRef.current?.(liveFrame)
     const remaining = flushNewAudio()
     setIsRecording(false)
     setIsPaused(true)
@@ -208,6 +248,8 @@ export function useAudioRecorder(): AudioRecorderHandle {
   }
 
   const stop = async (): Promise<AudioChunkPayload | null> => {
+    const liveFrame = flushLiveFrame()
+    if (liveFrame) onLiveFrameRef.current?.(liveFrame)
     const remaining = isRecording ? flushNewAudio() : null
     try {
       nodeRef.current?.port.close()
@@ -225,6 +267,7 @@ export function useAudioRecorder(): AudioRecorderHandle {
     ctxRef.current = null
     inputStreamsRef.current = []
     onChunkRef.current = null
+    onLiveFrameRef.current = null
     setStream(null)
     setIsRecording(false)
     setIsPaused(false)

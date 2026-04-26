@@ -29,6 +29,13 @@ export const SETTINGS_KEYS = [
   'whisperBin',
   'whisperModel',
   'whisperLanguage',
+  'transcriptionEngine',
+  'appleSpeechLocale',
+  'appleSpeechRequiresOnDevice',
+  'liveTranslationProvider',
+  'libreTranslateHost',
+  'libreTranslateApiKey',
+  'localOpusHost',
   'captureMode',
   'pillCompact',
   'pillX',
@@ -49,10 +56,22 @@ const ENV_MAP: Partial<Record<SettingKey, string>> = {
 
 let cached: AppSettings | null = null
 
+const DEFAULT_SETTINGS: AppSettings = {
+  transcriptionEngine: 'whisper',
+  appleSpeechLocale: 'pt-BR',
+  appleSpeechRequiresOnDevice: false,
+  liveTranslationProvider: 'libretranslate',
+  libreTranslateHost: 'http://127.0.0.1:5000',
+  localOpusHost: 'http://127.0.0.1:5056'
+}
+
 async function loadSettings(): Promise<AppSettings> {
   if (cached) return cached
   const store = await getStore()
-  cached = store.get('settings') || {}
+  cached = {
+    ...DEFAULT_SETTINGS,
+    ...(store.get('settings') || {})
+  }
   return cached
 }
 
