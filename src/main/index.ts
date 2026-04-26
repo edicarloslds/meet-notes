@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, screen, shell, Tray } from 'electron'
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, screen, shell, systemPreferences, Tray } from 'electron'
 import { existsSync, readFileSync } from 'fs'
 import { writeFile } from 'fs/promises'
 import { join } from 'path'
@@ -10,6 +10,7 @@ import {
   MeetingExportFormat,
   MeetingDetectedPayload,
   MeetingProgressEvent,
+  OllamaChatRequest,
   OLLAMA_NOT_READY_MARKER,
   ProcessAudioResult,
   StageName,
@@ -23,6 +24,7 @@ import { AppleSpeechSession } from './appleSpeechService'
 import {
   assertOllamaReady,
   assertWhisperReady,
+  chatWithOllama,
   getOllamaStatus,
   getWhisperStatus,
   isAbortError,
@@ -1158,6 +1160,20 @@ app.whenReady().then(async () => {
   ipcMain.handle(IpcChannels.ResetPillPosition, async () => {
     await resetPillPosition()
   })
+  ipcMain.handle(IpcChannels.OpenDashboardSettings, async (_e, tab?: string) => {
+    openDashboard()
+    const target = dashboardWindow
+    if (!target) return
+    const send = (): void => {
+      if (target.isDestroyed()) return
+      target.webContents.send(IpcChannels.ShowSettingsTab, tab ?? 'live')
+    }
+    if (target.webContents.isLoading()) {
+      target.webContents.once('did-finish-load', send)
+    } else {
+      send()
+    }
+  })
   ipcMain.handle(IpcChannels.OpenLiveTranscript, async (_e, session?: LiveTranscriptSession) => {
     const next = session && typeof session === 'object' ? session : getDefaultLiveTranscriptSession()
     openLiveTranscriptWindow({
@@ -1248,6 +1264,18 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle(IpcChannels.GetWhisperStatus, async () => getWhisperStatus())
   ipcMain.handle(IpcChannels.GetOllamaStatus, async () => getOllamaStatus())
+  ipcMain.handle(IpcChannels.OllamaChat, async (_e, request: OllamaChatRequest) => {
+    return chatWithOllama(request)
+  })
+  ipcMain.handle(IpcChannels.GetPermissionsStatus, async () => {
+    if (process.platform !== 'darwin') {
+      return { screenRecording: 'unsupported', microphone: 'unsupported' }
+    }
+    return {
+      screenRecording: systemPreferences.getMediaAccessStatus('screen'),
+      microphone: systemPreferences.getMediaAccessStatus('microphone')
+    }
+  })
   ipcMain.handle(IpcChannels.OpenSystemSettings, async (_e, section: SystemSettingsSection) => {
     const urls: Record<SystemSettingsSection, string> = {
       microphone: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone',

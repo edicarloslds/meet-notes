@@ -47,7 +47,9 @@
       "Bash(timeout 5 ./resources/bin/apple-translate-helper)",
       "Bash(echo \"---exit:$?---\")",
       "Bash(git add *)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(/Users/Edicarlos/Work/MyProjects/distill-app/node_modules/.pnpm/get-windows@9.3.0_encoding@0.1.13/node_modules/get-windows/main --open-windows-list)",
+      "Bash(echo \"exit:$?\")"
     ]
   }
 }

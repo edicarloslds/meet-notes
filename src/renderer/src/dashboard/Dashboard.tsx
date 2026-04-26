@@ -2,10 +2,12 @@ import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import ReactMarkdown from 'react-markdown'
 import {
   OLLAMA_NOT_READY_MARKER,
+  type OllamaChatMessage,
   type TranscriptSegment,
   WHISPER_NOT_READY_MARKER,
   type Meeting,
   type OllamaStatus,
+  type PermissionsStatus,
   type WhisperStatus
 } from '../../../shared/types'
 import { SettingsPanel } from './SettingsPanel'
@@ -27,8 +29,11 @@ export function Dashboard(): ReactElement {
   const [tab, setTab] = useState<'summary' | 'transcript' | 'actions'>('summary')
   const [copied, setCopied] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  const [showChat, setShowChat] = useState(false)
+  const [settingsTab, setSettingsTab] = useState<'meetings' | 'live' | 'general' | undefined>(undefined)
   const [whisperStatus, setWhisperStatus] = useState<WhisperStatus | null>(null)
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null)
+  const [permissions, setPermissions] = useState<PermissionsStatus | null>(null)
   const [showWelcome, setShowWelcome] = useState<boolean | null>(null)
   const [progressByMeeting, setProgressByMeeting] = useState<Record<string, TimelineState>>({})
   const [editingSegmentId, setEditingSegmentId] = useState<string | null>(null)
@@ -51,12 +56,14 @@ export function Dashboard(): ReactElement {
 
   const refreshStatuses = async (): Promise<void> => {
     try {
-      const [w, o] = await Promise.all([
+      const [w, o, p] = await Promise.all([
         window.distill.getWhisperStatus(),
-        window.distill.getOllamaStatus()
+        window.distill.getOllamaStatus(),
+        window.distill.getPermissionsStatus()
       ])
       setWhisperStatus(w)
       setOllamaStatus(o)
+      setPermissions(p)
     } catch {
       /* ignore */
     }
@@ -106,11 +113,23 @@ export function Dashboard(): ReactElement {
       })
     })
     const interval = window.setInterval(() => void refresh(), 5000)
+    const onFocus = (): void => void refreshStatuses()
+    window.addEventListener('focus', onFocus)
+    const offShowSettings = window.distill.onShowSettingsTab((tab) => {
+      if (tab === 'meetings' || tab === 'live' || tab === 'general') {
+        setSettingsTab(tab)
+      } else {
+        setSettingsTab(undefined)
+      }
+      setShowSettings(true)
+    })
     return () => {
       window.removeEventListener('online', handleOnline)
+      window.removeEventListener('focus', onFocus)
       offEnded()
       offDetected()
       offProgress()
+      offShowSettings()
       window.clearInterval(interval)
     }
   }, [])
@@ -384,6 +403,13 @@ export function Dashboard(): ReactElement {
     await window.distill.openLiveTranscript()
   }
 
+  const openChat = (): void => {
+    clearSegmentEditing()
+    setIsEditing(false)
+    setShowSettings(false)
+    setShowChat(true)
+  }
+
   if (showWelcome === null) {
     return <div className="h-full w-full" />
   }
@@ -404,15 +430,33 @@ export function Dashboard(): ReactElement {
             <div className="flex items-center gap-1" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
               <button
                 type="button"
+                aria-label="Chat com Ollama"
+                title="Chat com Ollama"
+                onClick={openChat}
+                className={`p-1.5 rounded-md ${
+                  showChat
+                    ? 'bg-sky-100 text-sky-700'
+                    : 'text-slate-500 hover:text-slate-800 hover:bg-slate-200/70'
+                }`}
+              >
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
+                  <path d="M8 9h8" />
+                  <path d="M8 13h5" />
+                </svg>
+              </button>
+              <button
+                type="button"
                 aria-label="Transcrição ao vivo"
                 title="Transcrição ao vivo"
                 onClick={() => void handleOpenLiveTranscript()}
                 className="p-1.5 rounded-md text-slate-500 hover:text-slate-800 hover:bg-slate-200/70"
               >
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
-                  <path d="M8 9h8" />
-                  <path d="M8 13h5" />
+                  <rect x="9" y="2" width="6" height="12" rx="3" />
+                  <path d="M5 11a7 7 0 0 0 14 0" />
+                  <line x1="12" y1="18" x2="12" y2="22" />
+                  <line x1="9" y1="22" x2="15" y2="22" />
                 </svg>
               </button>
               <button
@@ -455,10 +499,10 @@ export function Dashboard(): ReactElement {
                 key={m.id}
                 role="button"
                 tabIndex={0}
-                onClick={() => { clearSegmentEditing(); setShowSettings(false); setSelectedId(m.id); setIsEditing(false); setTab('summary') }}
+                onClick={() => { clearSegmentEditing(); setShowSettings(false); setShowChat(false); setSelectedId(m.id); setIsEditing(false); setTab('summary') }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
-                    clearSegmentEditing(); setShowSettings(false); setSelectedId(m.id); setIsEditing(false); setTab('summary')
+                    clearSegmentEditing(); setShowSettings(false); setShowChat(false); setSelectedId(m.id); setIsEditing(false); setTab('summary')
                   }
                 }}
                 className={`group relative w-full text-left px-4 py-3 border-b border-slate-100 hover:bg-slate-50 transition cursor-pointer ${
@@ -569,6 +613,21 @@ export function Dashboard(): ReactElement {
       </aside>
 
       <main className="flex-1 overflow-y-auto">
+        {!showSettings && permissions && permissions.screenRecording !== 'granted' && permissions.screenRecording !== 'unsupported' && (
+          <div className="bg-rose-50 border-b border-rose-200 px-6 py-3 flex items-center justify-between gap-4">
+            <div className="text-sm text-rose-900">
+              <span className="font-medium">Permissão de gravação de tela necessária.</span>{' '}
+              Sem ela o Distill não detecta automaticamente as janelas de reunião. Conceda em System Settings › Privacy & Security › Screen Recording e reinicie o app.
+            </div>
+            <button
+              type="button"
+              onClick={() => void window.distill.openSystemSettings('screen-recording')}
+              className="shrink-0 text-xs font-medium bg-rose-600 hover:bg-rose-500 text-white rounded-md px-3 py-1.5"
+            >
+              Abrir System Settings
+            </button>
+          </div>
+        )}
         {!showSettings && (() => {
           const whisperIssue =
             whisperStatus && (!whisperStatus.binAvailable || !whisperStatus.model)
@@ -611,7 +670,16 @@ export function Dashboard(): ReactElement {
           </div>
         )}
         {showSettings ? (
-          <SettingsPanel onClose={() => { setShowSettings(false); void refreshStatuses() }} />
+          <SettingsPanel
+            initialTab={settingsTab}
+            onClose={() => { setShowSettings(false); setSettingsTab(undefined); void refreshStatuses() }}
+          />
+        ) : showChat ? (
+          <OllamaChatPanel
+            status={ollamaStatus}
+            onRefreshStatus={() => void refreshStatuses()}
+            onOpenSettings={() => setShowSettings(true)}
+          />
         ) : selected ? (
           <div className="max-w-3xl mx-auto px-10 py-10">
             {!isEditing && (
@@ -1125,6 +1193,281 @@ export function Dashboard(): ReactElement {
         )}
       </main>
 
+    </div>
+  )
+}
+
+function OllamaChatPanel({
+  status,
+  onRefreshStatus,
+  onOpenSettings
+}: {
+  status: OllamaStatus | null
+  onRefreshStatus: () => void
+  onOpenSettings: () => void
+}): ReactElement {
+  const [messages, setMessages] = useState<OllamaChatMessage[]>([])
+  const [draft, setDraft] = useState('')
+  const [selectedModel, setSelectedModel] = useState('')
+  const [think, setThink] = useState(false)
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const endRef = useRef<HTMLDivElement | null>(null)
+  const models = status?.models ?? []
+  const activeModel = selectedModel || status?.selectedModel || models[0] || ''
+  const canSend = Boolean(activeModel && draft.trim() && !sending)
+  const canReset = messages.length > 0 || draft.trim().length > 0 || Boolean(error)
+
+  useEffect(() => {
+    if (!selectedModel && status?.selectedModel) setSelectedModel(status.selectedModel)
+  }, [selectedModel, status?.selectedModel])
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: 'end' })
+  }, [messages, sending])
+
+  const send = async (): Promise<void> => {
+    const content = draft.trim()
+    if (!content || !activeModel) return
+    const outgoing: OllamaChatMessage = { role: 'user', content }
+    const nextMessages = [...messages, outgoing]
+    setMessages(nextMessages)
+    setDraft('')
+    setSending(true)
+    setError(null)
+    try {
+      const response = await window.distill.ollamaChat(nextMessages, activeModel, think)
+      setMessages((prev) => [...prev, response.message])
+    } catch (err) {
+      setError((err as Error).message)
+      setMessages(messages)
+    } finally {
+      setSending(false)
+      onRefreshStatus()
+    }
+  }
+
+  const resetChat = (): void => {
+    setMessages([])
+    setDraft('')
+    setError(null)
+  }
+
+  return (
+    <div className="flex h-full flex-col bg-[#f6f7f9]">
+      <header className="border-b border-slate-200 bg-white/95 px-8 py-5 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-slate-400">
+              <span className={`h-2 w-2 rounded-full ${status?.reachable ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+              Ollama
+            </div>
+            <h2 className="mt-1 truncate text-2xl font-semibold text-slate-900">Chat local</h2>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={onOpenSettings}
+              aria-label="Configurações"
+              title="Configurações"
+              className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:bg-slate-50 hover:text-slate-900"
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06A2 2 0 0 1 7.04 4.3l.06.06A1.65 1.65 0 0 0 8.92 4a1.65 1.65 0 0 0 1-1.51V2a2 2 0 0 1 4 0v.49a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        {status && (!status.reachable || models.length === 0) && (
+          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            {!status.reachable
+              ? `Ollama offline em ${status.host}.`
+              : 'Nenhum modelo encontrado. Instale um modelo com ollama pull ou ajuste as configurações.'}
+          </div>
+        )}
+      </header>
+
+      <div className="flex-1 overflow-y-auto px-8 py-7">
+        {messages.length === 0 ? (
+          <div className="flex h-full items-center justify-center text-center">
+            <div className="max-w-sm">
+              <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-white text-sky-600 shadow-sm ring-1 ring-slate-200">
+                <svg viewBox="0 0 24 24" width="21" height="21" fill="currentColor" aria-hidden="true">
+                  <path d="M12 2l1.9 6.2L20 10l-6.1 1.8L12 18l-1.9-6.2L4 10l6.1-1.8L12 2z" />
+                </svg>
+              </div>
+              <div className="mt-4 text-sm font-semibold text-slate-800">Chat local pronto</div>
+              <div className="mt-1 text-sm text-slate-500">{activeModel || 'Nenhum modelo selecionado'}</div>
+            </div>
+          </div>
+        ) : (
+          <div className="mx-auto max-w-4xl space-y-7">
+            {messages.map((message, index) => (
+              <div
+                key={`${message.role}-${index}`}
+                className={message.role === 'user' ? 'flex justify-end' : 'grid grid-cols-[34px_minmax(0,1fr)] gap-4'}
+              >
+                {message.role === 'user' ? (
+                  <div className="max-w-[58%] rounded-2xl bg-slate-900 px-4 py-2.5 text-sm leading-relaxed text-white shadow-sm">
+                    {message.content}
+                  </div>
+                ) : (
+                  <>
+                    <div className="mt-0.5 flex h-7 w-7 items-center justify-center text-sky-600">
+                      <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true">
+                        <path d="M12 2l1.9 6.2L20 10l-6.1 1.8L12 18l-1.9-6.2L4 10l6.1-1.8L12 2z" />
+                      </svg>
+                    </div>
+                    <article className="max-w-3xl">
+                      {message.thinking && (
+                        <details className="mb-3 rounded-lg bg-white/80 px-3 py-2 text-sm text-slate-600 ring-1 ring-slate-200">
+                          <summary className="text-xs font-medium text-slate-500">Thinking</summary>
+                          <div className="mt-2 whitespace-pre-wrap">{message.thinking}</div>
+                        </details>
+                      )}
+                      <div className="markdown-body text-[15px] leading-7">
+                        <ReactMarkdown>{message.content || 'Sem resposta.'}</ReactMarkdown>
+                      </div>
+                      <div className="mt-4 flex items-center gap-1 text-slate-400">
+                        <button
+                          type="button"
+                          aria-label="Copiar resposta"
+                          title="Copiar resposta"
+                          onClick={() => void navigator.clipboard.writeText(message.content)}
+                          className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-white hover:text-slate-700"
+                        >
+                          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <rect x="9" y="9" width="13" height="13" rx="2" />
+                            <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+                          </svg>
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="Reiniciar com nova pergunta"
+                          title="Reiniciar chat"
+                          onClick={resetChat}
+                          className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-white hover:text-slate-700"
+                        >
+                          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                            <path d="M21 3v6h-6" />
+                          </svg>
+                        </button>
+                      </div>
+                    </article>
+                  </>
+                )}
+              </div>
+            ))}
+            {sending && (
+              <div className="grid grid-cols-[34px_minmax(0,1fr)] gap-4">
+                <div className="mt-0.5 flex h-7 w-7 items-center justify-center text-sky-600">
+                  <svg className="animate-spin" viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true">
+                    <path d="M12 2l1.9 6.2L20 10l-6.1 1.8L12 18l-1.9-6.2L4 10l6.1-1.8L12 2z" />
+                  </svg>
+                </div>
+                <div className="pt-1 text-sm text-slate-500">
+                  Pensando…
+                </div>
+              </div>
+            )}
+            <div ref={endRef} />
+          </div>
+        )}
+      </div>
+
+      <form
+        onSubmit={(e) => { e.preventDefault(); void send() }}
+        className="border-t border-slate-200 bg-gradient-to-t from-white via-white to-white/70 px-8 py-5"
+      >
+        {error && <div className="mx-auto mb-2 max-w-4xl text-xs text-red-600">{error}</div>}
+        <div className="mx-auto max-w-4xl rounded-3xl bg-slate-100 px-5 py-4 shadow-inner ring-1 ring-slate-200 focus-within:bg-white focus-within:ring-sky-300">
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                void send()
+              }
+            }}
+            rows={2}
+            placeholder="Peça ao Distill"
+            className="min-h-[48px] w-full resize-none border-0 bg-transparent text-sm text-slate-800 outline-none placeholder:text-slate-500"
+          />
+          <div className="mt-3 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-xs text-slate-500">
+              <button
+                type="button"
+                onClick={resetChat}
+                disabled={!canReset}
+                className="inline-flex h-8 items-center gap-2 rounded-lg px-2 font-medium hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M12 20h9" />
+                  <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+                </svg>
+                Novo chat
+              </button>
+              <label className="group inline-flex h-8 items-center gap-2 rounded-lg px-2 font-medium hover:bg-white focus-within:bg-white">
+                <span className="sr-only">Modelo</span>
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M12 2v4" />
+                  <path d="M12 18v4" />
+                  <path d="M4.93 4.93l2.83 2.83" />
+                  <path d="M16.24 16.24l2.83 2.83" />
+                  <path d="M2 12h4" />
+                  <path d="M18 12h4" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
+                <select
+                  value={activeModel}
+                  onChange={(e) => setSelectedModel(e.target.value)}
+                  className="max-w-[190px] appearance-none bg-transparent pr-5 text-xs font-medium text-slate-600 outline-none"
+                >
+                  {!activeModel && <option value="">Modelo</option>}
+                  {models.map((model) => (
+                    <option key={model} value={model}>{model}</option>
+                  ))}
+                  {activeModel && !models.includes(activeModel) && (
+                    <option value={activeModel}>{activeModel}</option>
+                  )}
+                </select>
+                <svg className="-ml-5 pointer-events-none text-slate-400" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M6 9l6 6 6-6" />
+                </svg>
+              </label>
+              <label className={`inline-flex h-8 items-center gap-2 rounded-lg px-2 font-medium transition hover:bg-white ${
+                think ? 'text-sky-700' : 'text-slate-500'
+              }`}>
+                <input
+                  type="checkbox"
+                  checked={think}
+                  onChange={(e) => setThink(e.target.checked)}
+                  className="sr-only"
+                />
+                <span className={`relative h-4 w-7 rounded-full transition ${think ? 'bg-sky-600' : 'bg-slate-300'}`}>
+                  <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white shadow-sm transition ${think ? 'left-3.5' : 'left-0.5'}`} />
+                </span>
+                Think
+              </label>
+            </div>
+            <button
+              type="submit"
+              disabled={!canSend}
+              aria-label="Enviar"
+              title="Enviar"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white shadow-sm transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M22 2L11 13" />
+                <path d="M22 2l-7 20-4-9-9-4 20-7z" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </form>
     </div>
   )
 }

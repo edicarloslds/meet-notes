@@ -8,11 +8,19 @@ import {
 } from 'react'
 import type {
   AppSettings,
+  AudioCaptureMode,
   LiveTranslationProvider,
+  LiveTranslationStatus,
   OllamaStatus,
   WhisperStatus
 } from '../../../shared/types'
 import { WhisperModelManager } from './WhisperModelManager'
+
+const LIVE_LANGUAGE_OPTIONS = [
+  { locale: 'pt-BR', label: 'Português' },
+  { locale: 'en-US', label: 'Inglês' },
+  { locale: 'es-ES', label: 'Espanhol' }
+] as const
 
 const inputClass =
   'mt-1.5 w-full text-sm bg-white border border-slate-300 rounded-md px-3 py-2 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100 font-mono'
@@ -67,15 +75,27 @@ function SelectField({
   )
 }
 
-export function SettingsPanel({ onClose }: { onClose: () => void }): ReactElement {
+export function SettingsPanel({
+  onClose,
+  initialTab
+}: {
+  onClose: () => void
+  initialTab?: TabId
+}): ReactElement {
   const [values, setValues] = useState<AppSettings>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [savedMsg, setSavedMsg] = useState<string | null>(null)
   const [whisperStatus, setWhisperStatus] = useState<WhisperStatus | null>(null)
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null)
+  const [translationStatus, setTranslationStatus] = useState<LiveTranslationStatus | null>(null)
   const [rechecking, setRechecking] = useState(false)
-  const [activeTab, setActiveTab] = useState<TabId>('meetings')
+  const [checkingTranslation, setCheckingTranslation] = useState(false)
+  const [activeTab, setActiveTab] = useState<TabId>(initialTab ?? 'meetings')
+
+  useEffect(() => {
+    if (initialTab) setActiveTab(initialTab)
+  }, [initialTab])
 
   const refreshStatuses = useCallback(async (): Promise<void> => {
     setRechecking(true)
@@ -91,14 +111,31 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): ReactElemen
     }
   }, [])
 
+  const refreshTranslationStatus = useCallback(async (): Promise<void> => {
+    setCheckingTranslation(true)
+    try {
+      const status = await window.distill.getLiveTranslationStatus()
+      setTranslationStatus(status)
+    } catch (err) {
+      setTranslationStatus({
+        provider: 'libretranslate',
+        host: '',
+        reachable: false,
+        error: err instanceof Error ? err.message : String(err)
+      })
+    } finally {
+      setCheckingTranslation(false)
+    }
+  }, [])
+
   useEffect(() => {
     void (async () => {
       const current = await window.distill.getSettings()
       setValues(current)
-      await refreshStatuses()
+      await Promise.all([refreshStatuses(), refreshTranslationStatus()])
       setLoading(false)
     })()
-  }, [refreshStatuses])
+  }, [refreshStatuses, refreshTranslationStatus])
 
   const update = <K extends keyof AppSettings>(key: K, value: AppSettings[K]): void => {
     setValues((prev) => ({ ...prev, [key]: value }))
@@ -111,7 +148,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): ReactElemen
       setValues(saved)
       setSavedMsg('Configurações salvas')
       setTimeout(() => setSavedMsg(null), 2500)
-      await refreshStatuses()
+      await Promise.all([refreshStatuses(), refreshTranslationStatus()])
     } finally {
       setSaving(false)
     }
@@ -190,7 +227,14 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): ReactElemen
         )}
 
         {activeTab === 'live' && (
-          <LiveTab values={values} update={update} provider={provider} />
+          <LiveTab
+            values={values}
+            update={update}
+            provider={provider}
+            translationStatus={translationStatus}
+            checkingTranslation={checkingTranslation}
+            onRecheckTranslation={() => void refreshTranslationStatus()}
+          />
         )}
 
         {activeTab === 'general' && <GeneralTab values={values} update={update} />}
@@ -382,89 +426,212 @@ function MeetingsTab({
 function LiveTab({
   values,
   update,
-  provider
+  provider,
+  translationStatus,
+  checkingTranslation,
+  onRecheckTranslation
 }: {
   values: AppSettings
   update: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void
   provider: LiveTranslationProvider
+  translationStatus: LiveTranslationStatus | null
+  checkingTranslation: boolean
+  onRecheckTranslation: () => void
 }): ReactElement {
-  return (
-    <section className="bg-white border border-slate-200 rounded-lg shadow-sm">
-      <header className="px-6 py-4 border-b border-slate-100">
-        <h3 className="text-sm font-semibold text-slate-800">Tradução ao vivo</h3>
-        <p className="text-xs text-slate-500 mt-0.5">
-          Provider dedicado para as legendas traduzidas. O Ollama fica reservado para resumos.
-        </p>
-      </header>
-      <div className="divide-y divide-slate-100">
-        <div className="px-6 py-4">
-          <label htmlFor="setting-liveTranslationProvider" className="block text-sm font-medium text-slate-700">
-            Provider
-          </label>
-          <SelectField
-            id="setting-liveTranslationProvider"
-            value={provider}
-            onChange={(e) => update('liveTranslationProvider', e.target.value as LiveTranslationProvider)}
-          >
-            <option value="libretranslate">LibreTranslate</option>
-            <option value="local-opus">Local OPUS</option>
-          </SelectField>
-          <p className="text-xs text-slate-500 mt-1.5">
-            {provider === 'libretranslate'
-              ? 'LibreTranslate funciona com servidor local ou remoto.'
-              : 'Local OPUS espera um serviço local CTranslate2/OPUS-MT compatível com POST /translate.'}
-          </p>
-        </div>
+  const sourceLocale = values.liveSourceLocale ?? 'en-US'
+  const targetLocale = values.liveTargetLocale ?? 'pt-BR'
+  const captureMode = values.liveCaptureMode ?? 'auto'
 
-        {provider === 'libretranslate' ? (
-          <>
-            <div className="px-6 py-4">
-              <label htmlFor="setting-libreTranslateHost" className="block text-sm font-medium text-slate-700">
-                Host LibreTranslate
-              </label>
-              <input
-                id="setting-libreTranslateHost"
-                type="text"
-                value={values.libreTranslateHost ?? ''}
-                onChange={(e) => update('libreTranslateHost', e.target.value)}
-                placeholder="http://127.0.0.1:5000"
-                autoComplete="off"
-                spellCheck={false}
-                className={inputClass}
-              />
-            </div>
-            <div className="px-6 py-4">
-              <label htmlFor="setting-libreTranslateApiKey" className="block text-sm font-medium text-slate-700">
-                API key LibreTranslate <span className="font-normal text-slate-400">(opcional)</span>
-              </label>
-              <input
-                id="setting-libreTranslateApiKey"
-                type="password"
-                value={values.libreTranslateApiKey ?? ''}
-                onChange={(e) => update('libreTranslateApiKey', e.target.value)}
-                autoComplete="off"
-                spellCheck={false}
-                className={inputClass}
-              />
-            </div>
-          </>
-        ) : (
+  return (
+    <>
+      <LiveTranslationStatusCard
+        status={translationStatus}
+        checking={checkingTranslation}
+        onRecheck={onRecheckTranslation}
+      />
+
+      <section className="bg-white border border-slate-200 rounded-lg shadow-sm">
+        <header className="px-6 py-4 border-b border-slate-100">
+          <h3 className="text-sm font-semibold text-slate-800">Sessão padrão</h3>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Idiomas e fonte de áudio usados quando você abre a janela de transcrição ao vivo.
+          </p>
+        </header>
+        <div className="divide-y divide-slate-100">
           <div className="px-6 py-4">
-            <label htmlFor="setting-localOpusHost" className="block text-sm font-medium text-slate-700">
-              Host Local OPUS
+            <label htmlFor="setting-liveSourceLocale" className="block text-sm font-medium text-slate-700">
+              Idioma de origem
             </label>
-            <input
-              id="setting-localOpusHost"
-              type="text"
-              value={values.localOpusHost ?? ''}
-              onChange={(e) => update('localOpusHost', e.target.value)}
-              placeholder="http://127.0.0.1:5056"
-              autoComplete="off"
-              spellCheck={false}
-              className={inputClass}
-            />
+            <SelectField
+              id="setting-liveSourceLocale"
+              value={sourceLocale}
+              onChange={(e) => update('liveSourceLocale', e.target.value)}
+            >
+              {LIVE_LANGUAGE_OPTIONS.map((option) => (
+                <option key={option.locale} value={option.locale}>{option.label}</option>
+              ))}
+            </SelectField>
           </div>
-        )}
+          <div className="px-6 py-4">
+            <label htmlFor="setting-liveTargetLocale" className="block text-sm font-medium text-slate-700">
+              Traduzir para
+            </label>
+            <SelectField
+              id="setting-liveTargetLocale"
+              value={targetLocale}
+              onChange={(e) => update('liveTargetLocale', e.target.value)}
+            >
+              <option value="none">Sem tradução</option>
+              {LIVE_LANGUAGE_OPTIONS.map((option) => (
+                <option key={option.locale} value={option.locale}>{option.label}</option>
+              ))}
+            </SelectField>
+          </div>
+          <div className="px-6 py-4">
+            <label htmlFor="setting-liveCaptureMode" className="block text-sm font-medium text-slate-700">
+              Captura de áudio
+            </label>
+            <SelectField
+              id="setting-liveCaptureMode"
+              value={captureMode}
+              onChange={(e) => update('liveCaptureMode', e.target.value as AudioCaptureMode)}
+            >
+              <option value="auto">Automático</option>
+              <option value="system">Sistema</option>
+              <option value="microphone">Microfone</option>
+              <option value="mixed">Sistema + microfone</option>
+            </SelectField>
+            <p className="text-xs text-slate-500 mt-1.5">
+              Use uma fonte específica se a janela ao vivo não estiver capturando o áudio esperado.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section className="bg-white border border-slate-200 rounded-lg shadow-sm">
+        <header className="px-6 py-4 border-b border-slate-100">
+          <h3 className="text-sm font-semibold text-slate-800">Tradutor</h3>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Provider dedicado para as legendas traduzidas. O Ollama fica reservado para resumos.
+          </p>
+        </header>
+        <div className="divide-y divide-slate-100">
+          <div className="px-6 py-4">
+            <label htmlFor="setting-liveTranslationProvider" className="block text-sm font-medium text-slate-700">
+              Provider
+            </label>
+            <SelectField
+              id="setting-liveTranslationProvider"
+              value={provider}
+              onChange={(e) => update('liveTranslationProvider', e.target.value as LiveTranslationProvider)}
+            >
+              <option value="libretranslate">LibreTranslate</option>
+              <option value="local-opus">Local OPUS</option>
+            </SelectField>
+            <p className="text-xs text-slate-500 mt-1.5">
+              {provider === 'libretranslate'
+                ? 'LibreTranslate funciona com servidor local ou remoto.'
+                : 'Local OPUS espera um serviço local CTranslate2/OPUS-MT compatível com POST /translate.'}
+            </p>
+          </div>
+
+          {provider === 'libretranslate' ? (
+            <>
+              <div className="px-6 py-4">
+                <label htmlFor="setting-libreTranslateHost" className="block text-sm font-medium text-slate-700">
+                  Host LibreTranslate
+                </label>
+                <input
+                  id="setting-libreTranslateHost"
+                  type="text"
+                  value={values.libreTranslateHost ?? ''}
+                  onChange={(e) => update('libreTranslateHost', e.target.value)}
+                  placeholder="http://127.0.0.1:5000"
+                  autoComplete="off"
+                  spellCheck={false}
+                  className={inputClass}
+                />
+              </div>
+              <div className="px-6 py-4">
+                <label htmlFor="setting-libreTranslateApiKey" className="block text-sm font-medium text-slate-700">
+                  API key LibreTranslate <span className="font-normal text-slate-400">(opcional)</span>
+                </label>
+                <input
+                  id="setting-libreTranslateApiKey"
+                  type="password"
+                  value={values.libreTranslateApiKey ?? ''}
+                  onChange={(e) => update('libreTranslateApiKey', e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                  className={inputClass}
+                />
+              </div>
+            </>
+          ) : (
+            <div className="px-6 py-4">
+              <label htmlFor="setting-localOpusHost" className="block text-sm font-medium text-slate-700">
+                Host Local OPUS
+              </label>
+              <input
+                id="setting-localOpusHost"
+                type="text"
+                value={values.localOpusHost ?? ''}
+                onChange={(e) => update('localOpusHost', e.target.value)}
+                placeholder="http://127.0.0.1:5056"
+                autoComplete="off"
+                spellCheck={false}
+                className={inputClass}
+              />
+            </div>
+          )}
+        </div>
+      </section>
+    </>
+  )
+}
+
+function LiveTranslationStatusCard({
+  status,
+  checking,
+  onRecheck
+}: {
+  status: LiveTranslationStatus | null
+  checking: boolean
+  onRecheck: () => void
+}): ReactElement {
+  const reachable = status?.reachable === true
+  return (
+    <section
+      className={`border rounded-lg p-5 ${
+        reachable ? 'border-emerald-200 bg-emerald-50/50' : 'border-amber-200 bg-amber-50/60'
+      }`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[11px] uppercase tracking-wider text-slate-500 mb-1">Tradutor</div>
+          <div className={`text-sm font-semibold ${reachable ? 'text-emerald-700' : 'text-amber-800'}`}>
+            {reachable ? 'Conectado' : 'Indisponível'}
+          </div>
+          {status && (
+            <div className="text-xs text-slate-600 mt-1 font-mono truncate">
+              {status.host || '—'}
+            </div>
+          )}
+          {!reachable && status?.error && (
+            <div className="text-xs text-amber-800 mt-1">{status.error}</div>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={onRecheck}
+          disabled={checking}
+          className="text-xs text-slate-600 hover:text-slate-900 bg-white border border-slate-300 rounded-md px-2 py-1 disabled:opacity-60 inline-flex items-center gap-1.5 shrink-0"
+        >
+          {checking && (
+            <span className="w-3 h-3 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" />
+          )}
+          {checking ? 'Testando…' : 'Testar'}
+        </button>
       </div>
     </section>
   )

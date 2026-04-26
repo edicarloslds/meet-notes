@@ -202,16 +202,29 @@ export function startMeetingWatcher(cb: Callbacks): void {
         cb.onEnded()
       }
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      const missingScreenRecording = /screen recording/i.test(msg)
+      const missingAccessibility = /accessibility/i.test(msg)
       if (!warnedOnce) {
         warnedOnce = true
-        const msg = err instanceof Error ? err.message : String(err)
-        if (/accessibility/i.test(msg)) {
+        if (missingAccessibility) {
           console.warn(
             '[meetingWatcher] macOS Accessibility permission required. ' +
               'Grant it in System Settings › Privacy & Security › Accessibility for Electron/Distill.'
           )
+        } else if (missingScreenRecording) {
+          console.warn(
+            '[meetingWatcher] macOS Screen Recording permission required. ' +
+              'Grant it in System Settings › Privacy & Security › Screen Recording for Electron/Distill, then restart the app.'
+          )
         } else {
           console.warn('[meetingWatcher] poll failed:', msg)
+        }
+      }
+      if (missingScreenRecording || missingAccessibility) {
+        if (pollTimer) {
+          clearInterval(pollTimer)
+          pollTimer = null
         }
       }
     }

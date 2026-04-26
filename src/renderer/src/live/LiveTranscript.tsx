@@ -2,13 +2,11 @@ import {
   useEffect,
   useRef,
   useState,
-  type ReactElement,
-  type SelectHTMLAttributes
+  type ReactElement
 } from 'react'
 import type {
   AppSettings,
   AudioCaptureMode,
-  LiveTranslationProvider,
   LiveTranslationStatus,
   LiveTranscriptSession
 } from '../../../shared/types'
@@ -27,38 +25,6 @@ const MIN_LIVE_TRANSLATION_CHARS = 18
 const MAX_TRANSLATIONS_IN_FLIGHT = 4
 const RETRY_BACKOFF_MS = [1_500, 4_000, 9_000] as const
 
-type TargetLocale = 'none' | (typeof LANGUAGE_OPTIONS)[number]['locale']
-
-const liveSelectClass =
-  'appearance-none w-full rounded-md border border-white/10 bg-slate-900 pl-3 pr-10 py-2 text-sm text-slate-100 outline-none focus:border-sky-400 disabled:opacity-60'
-
-function LiveSelectField({
-  className,
-  children,
-  ...props
-}: SelectHTMLAttributes<HTMLSelectElement>): ReactElement {
-  return (
-    <div className="relative mt-1">
-      <select {...props} className={className ?? liveSelectClass}>
-        {children}
-      </select>
-      <svg
-        viewBox="0 0 24 24"
-        width="16"
-        height="16"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"
-      >
-        <path d="M6 9l6 6 6-6" />
-      </svg>
-    </div>
-  )
-}
-
 interface LiveMessage {
   id: string
   original: string
@@ -74,17 +40,14 @@ interface LiveMessage {
 export function LiveTranscript(): ReactElement {
   const [session, setSession] = useState<LiveTranscriptSession | null>(null)
   const [sourceLocale, setSourceLocale] = useState('en-US')
-  const [targetLocale, setTargetLocale] = useState<TargetLocale>('pt-BR')
+  const [targetLocale, setTargetLocale] = useState<string>('pt-BR')
   const [captureMode, setCaptureMode] = useState<AudioCaptureMode>('auto')
   const [messages, setMessages] = useState<LiveMessage[]>([])
   const [error, setError] = useState<string | null>(null)
   const [translationError, setTranslationError] = useState<string | null>(null)
   const [updatedAt, setUpdatedAt] = useState<number | null>(null)
   const [pending, setPending] = useState<'start' | 'stop' | null>(null)
-  const [settingsOpen, setSettingsOpen] = useState(false)
-  const [appSettings, setAppSettings] = useState<AppSettings>({})
   const [translationStatus, setTranslationStatus] = useState<LiveTranslationStatus | null>(null)
-  const [checkingTranslation, setCheckingTranslation] = useState(false)
   const [, setScrollTick] = useState(0)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const sessionRef = useRef<LiveTranscriptSession | null>(null)
@@ -98,14 +61,19 @@ export function LiveTranscript(): ReactElement {
   const resetSegmentCountRef = useRef(0)
   const translationGenerationRef = useRef(0)
   const autoScrollRef = useRef(true)
+  const isRecordingRef = useRef(false)
   const { start, stop, sampleRate, isRecording, stream } = useAudioRecorder()
+
+  useEffect(() => {
+    isRecordingRef.current = isRecording
+  }, [isRecording])
 
   useEffect(() => {
     const offSession = window.distill.onLiveTranscriptSession((next) => {
       sessionRef.current = next
       setSession(next)
       if (next.sourceLocale) setSourceLocale(next.sourceLocale)
-      if (next.targetLocale) setTargetLocale(next.targetLocale as TargetLocale)
+      if (next.targetLocale) setTargetLocale(next.targetLocale)
       latestTranscriptRef.current = next.transcript.trim()
       setMessages((prev) =>
         reconcileTranscriptMessages(
@@ -148,8 +116,15 @@ export function LiveTranscript(): ReactElement {
   }, [])
 
   useEffect(() => {
-    void window.distill.getSettings().then(setAppSettings).catch(() => undefined)
+    void loadSettingsFromStore()
     void refreshLiveTranslationStatus()
+    const onFocus = (): void => {
+      if (isRecordingRef.current) return
+      void loadSettingsFromStore()
+      void refreshLiveTranslationStatus()
+    }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
   }, [])
 
   useEffect(() => {
@@ -246,6 +221,21 @@ export function LiveTranscript(): ReactElement {
     }
   }, [sourceLocale, targetLocale, messages])
 
+  async function loadSettingsFromStore(): Promise<void> {
+    try {
+      const stored = await window.distill.getSettings()
+      applySettings(stored)
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function applySettings(stored: AppSettings): void {
+    if (stored.liveSourceLocale) setSourceLocale(stored.liveSourceLocale)
+    if (stored.liveTargetLocale) setTargetLocale(stored.liveTargetLocale)
+    if (stored.liveCaptureMode) setCaptureMode(stored.liveCaptureMode)
+  }
+
   const handleStart = async (): Promise<void> => {
     if (pending || isRecording) return
     setPending('start')
@@ -310,9 +300,10 @@ export function LiveTranscript(): ReactElement {
     }
   }
 
-  const canEditLanguages = !isRecording && pending === null
   const translating = targetLocale !== 'none' && targetLocale !== sourceLocale
   const activeTranslationCount = messages.filter((message) => message.translating).length
+  const translationBlocking = translating && translationStatus !== null && !translationStatus.reachable
+  const startDisabled = pending !== null || (!isRecording && translationBlocking)
 
   const handleScroll = (): void => {
     const el = scrollRef.current
@@ -344,22 +335,7 @@ export function LiveTranscript(): ReactElement {
     if (translateTimerRef.current) window.clearTimeout(translateTimerRef.current)
   }
 
-  const updateLiveTranslationSetting = <K extends keyof AppSettings>(
-    key: K,
-    value: AppSettings[K]
-  ): void => {
-    setAppSettings((prev) => {
-      const next = { ...prev, [key]: value }
-      void window.distill.saveSettings(next).then(setAppSettings).catch((err) => {
-        setTranslationError(err instanceof Error ? err.message : String(err))
-      })
-      window.setTimeout(() => void refreshLiveTranslationStatus(), 200)
-      return next
-    })
-  }
-
   const refreshLiveTranslationStatus = async (): Promise<void> => {
-    setCheckingTranslation(true)
     try {
       const status = await window.distill.getLiveTranslationStatus()
       setTranslationStatus(status)
@@ -369,8 +345,6 @@ export function LiveTranscript(): ReactElement {
       const message = err instanceof Error ? err.message : String(err)
       setTranslationError(message)
       setTranslationStatus(null)
-    } finally {
-      setCheckingTranslation(false)
     }
   }
 
@@ -407,18 +381,10 @@ export function LiveTranscript(): ReactElement {
             </button>
             <button
               type="button"
-              onClick={() => setSettingsOpen(true)}
-              className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-white/10 bg-slate-900 text-slate-300 shadow-sm transition hover:bg-slate-800 hover:text-white"
-              aria-label="Configurações da transcrição"
-              title="Configurações"
-            >
-              <SettingsGlyph />
-            </button>
-            <button
-              type="button"
               onClick={() => isRecording ? void handleStop() : void handleStart()}
-              disabled={pending !== null}
-              className={`rounded-md px-4 py-2 text-sm font-semibold text-white shadow-sm transition disabled:cursor-wait disabled:opacity-70 ${
+              disabled={startDisabled}
+              title={!isRecording && translationBlocking ? 'Tradutor indisponível. Verifique em Configurações → Tradução ao vivo.' : undefined}
+              className={`rounded-md px-4 py-2 text-sm font-semibold text-white shadow-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${
                 isRecording ? 'bg-red-500 hover:bg-red-400' : 'bg-emerald-500 hover:bg-emerald-400'
               }`}
             >
@@ -436,16 +402,17 @@ export function LiveTranscript(): ReactElement {
       <main
         ref={scrollRef}
         onScroll={handleScroll}
-        className="relative min-h-0 flex-1 overflow-y-auto px-5 py-5"
+        className="relative min-h-0 flex-1 overflow-y-auto px-5 py-5 flex flex-col"
       >
         {error && (
-          <div className="mb-4 rounded-md border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">
+          <div className="mb-4 shrink-0 rounded-md border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">
             {error}
           </div>
         )}
         {translationError && (
-          <div className="mb-4 rounded-md border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+          <div className="mb-4 shrink-0 rounded-md border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
             Tradução indisponível: {translationError}
+            {translationStatus?.host && <span className="ml-2 font-mono text-[11px] text-amber-200/80">({translationStatus.host})</span>}
           </div>
         )}
 
@@ -456,16 +423,16 @@ export function LiveTranscript(): ReactElement {
             ))}
           </div>
         ) : (
-          <div className="flex h-full items-center justify-center">
+          <div className="flex flex-1 items-center justify-center">
             <div className="text-center">
               <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-sky-400/10 text-sky-200 ring-1 ring-sky-300/20">
                 <TranscriptGlyph />
               </div>
               <div className="text-sm font-medium text-slate-200">
-                {isRecording ? 'Escutando' : 'Configure os idiomas e inicie'}
+                {isRecording ? 'Escutando' : 'Pronto para iniciar'}
               </div>
               <div className="mt-1 text-xs text-slate-500">
-                As legendas aparecem aqui em tempo real.
+                Ajuste idiomas e tradutor em Configurações → Tradução ao vivo.
               </div>
             </div>
           </div>
@@ -479,135 +446,6 @@ export function LiveTranscript(): ReactElement {
         >
           Ir para o atual
         </button>
-      )}
-      {settingsOpen && (
-        <div className="absolute inset-0 z-20 flex justify-end bg-slate-950/45 backdrop-blur-[1px]">
-          <button
-            type="button"
-            aria-label="Fechar configurações"
-            className="flex-1 cursor-default"
-            onClick={() => setSettingsOpen(false)}
-          />
-          <aside className="h-full w-[340px] border-l border-white/10 bg-slate-950 px-5 pb-5 pt-12 shadow-2xl">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="text-[11px] uppercase tracking-wider text-sky-300">Preferências</div>
-                <h2 className="mt-1 text-lg font-semibold text-white">Transcrição ao vivo</h2>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSettingsOpen(false)}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-400 transition hover:bg-white/10 hover:text-white"
-                aria-label="Fechar"
-              >
-                <CloseGlyph />
-              </button>
-            </div>
-
-            <div className="mt-6 space-y-5">
-              <label className="block">
-                <span className="text-[10px] uppercase tracking-wider text-slate-500">Tradutor</span>
-                <LiveSelectField
-                  value={appSettings.liveTranslationProvider ?? 'libretranslate'}
-                  onChange={(e) => updateLiveTranslationSetting(
-                    'liveTranslationProvider',
-                    e.target.value as LiveTranslationProvider
-                  )}
-                >
-                  <option value="libretranslate">LibreTranslate</option>
-                  <option value="local-opus">Local OPUS</option>
-                </LiveSelectField>
-              </label>
-              {(appSettings.liveTranslationProvider ?? 'libretranslate') === 'libretranslate' ? (
-                <label className="block">
-                  <span className="text-[10px] uppercase tracking-wider text-slate-500">Host LibreTranslate</span>
-                  <input
-                    type="text"
-                    value={appSettings.libreTranslateHost ?? 'http://127.0.0.1:5000'}
-                    onChange={(e) => updateLiveTranslationSetting('libreTranslateHost', e.target.value)}
-                    className="mt-1 w-full rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-400"
-                    spellCheck={false}
-                  />
-                </label>
-              ) : (
-                <label className="block">
-                  <span className="text-[10px] uppercase tracking-wider text-slate-500">Host Local OPUS</span>
-                  <input
-                    type="text"
-                    value={appSettings.localOpusHost ?? 'http://127.0.0.1:5056'}
-                    onChange={(e) => updateLiveTranslationSetting('localOpusHost', e.target.value)}
-                    className="mt-1 w-full rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-400"
-                    spellCheck={false}
-                  />
-                </label>
-              )}
-              <div className={`rounded-md border px-3 py-2 text-xs leading-5 ${
-                translationStatus?.reachable
-                  ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-100'
-                  : 'border-amber-400/20 bg-amber-400/10 text-amber-100'
-              }`}>
-                <div className="flex items-center justify-between gap-3">
-                  <span>
-                    {translationStatus?.reachable
-                      ? `Tradutor conectado em ${translationStatus.host}`
-                      : translationStatus?.error ?? 'Verifique o tradutor antes de iniciar.'}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => void refreshLiveTranslationStatus()}
-                    disabled={checkingTranslation}
-                    className="shrink-0 rounded border border-white/10 px-2 py-1 font-medium text-white/90 transition hover:bg-white/10 disabled:cursor-wait disabled:opacity-60"
-                  >
-                    {checkingTranslation ? 'Testando...' : 'Testar'}
-                  </button>
-                </div>
-              </div>
-              <label className="block">
-                <span className="text-[10px] uppercase tracking-wider text-slate-500">Origem</span>
-                <LiveSelectField
-                  value={sourceLocale}
-                  disabled={!canEditLanguages}
-                  onChange={(e) => setSourceLocale(e.target.value)}
-                >
-                  {LANGUAGE_OPTIONS.map((option) => (
-                    <option key={option.locale} value={option.locale}>{option.label}</option>
-                  ))}
-                </LiveSelectField>
-              </label>
-              <label className="block">
-                <span className="text-[10px] uppercase tracking-wider text-slate-500">Traduzir para</span>
-                <LiveSelectField
-                  value={targetLocale}
-                  disabled={!canEditLanguages}
-                  onChange={(e) => setTargetLocale(e.target.value as TargetLocale)}
-                >
-                  <option value="none">Sem tradução</option>
-                  {LANGUAGE_OPTIONS.map((option) => (
-                    <option key={option.locale} value={option.locale}>{option.label}</option>
-                  ))}
-                </LiveSelectField>
-              </label>
-              <label className="block">
-                <span className="text-[10px] uppercase tracking-wider text-slate-500">Áudio</span>
-                <LiveSelectField
-                  value={captureMode}
-                  disabled={!canEditLanguages}
-                  onChange={(e) => setCaptureMode(e.target.value as AudioCaptureMode)}
-                >
-                  <option value="auto">Automático</option>
-                  <option value="system">Sistema</option>
-                  <option value="microphone">Microfone</option>
-                  <option value="mixed">Sistema + microfone</option>
-                </LiveSelectField>
-              </label>
-              {!canEditLanguages && (
-                <div className="rounded-md border border-amber-400/20 bg-amber-400/10 px-3 py-2 text-xs leading-5 text-amber-100">
-                  Pare a sessão atual para alterar idiomas ou fonte de áudio.
-                </div>
-              )}
-            </div>
-          </aside>
-        </div>
       )}
     </div>
   )
@@ -831,18 +669,10 @@ function formatMessageTime(at: number | undefined, index: number): string {
 function TranscriptGlyph(): ReactElement {
   return (
     <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
-      <path d="M8 9h8" />
-      <path d="M8 13h5" />
-    </svg>
-  )
-}
-
-function SettingsGlyph(): ReactElement {
-  return (
-    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+      <rect x="9" y="2" width="6" height="12" rx="3" />
+      <path d="M5 11a7 7 0 0 0 14 0" />
+      <line x1="12" y1="18" x2="12" y2="22" />
+      <line x1="9" y1="22" x2="15" y2="22" />
     </svg>
   )
 }
@@ -852,14 +682,6 @@ function ResetGlyph(): ReactElement {
     <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M3 12a9 9 0 1 0 3-6.7" />
       <path d="M3 4v6h6" />
-    </svg>
-  )
-}
-
-function CloseGlyph(): ReactElement {
-  return (
-    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden>
-      <path d="M6 6l12 12M18 6L6 18" />
     </svg>
   )
 }

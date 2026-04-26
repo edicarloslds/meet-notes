@@ -14,7 +14,10 @@ import {
   LiveTranslationResult,
   MeetingProgressEvent,
   ModelDownloadProgress,
+  OllamaChatMessage,
+  OllamaChatResponse,
   OllamaStatus,
+  PermissionsStatus,
   ProcessAudioResult,
   SystemSettingsSection,
   WhisperModelInfo,
@@ -86,6 +89,15 @@ const api = {
     ipcRenderer.invoke(IpcChannels.ResetPillPosition),
   openLiveTranscript: (session?: LiveTranscriptSession): Promise<void> =>
     ipcRenderer.invoke(IpcChannels.OpenLiveTranscript, session),
+  openDashboardSettings: (tab?: string): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.OpenDashboardSettings, tab),
+  onShowSettingsTab: (cb: (tab: string) => void): (() => void) => {
+    const listener = (_: unknown, payload: string): void => cb(payload)
+    ipcRenderer.on(IpcChannels.ShowSettingsTab, listener)
+    return (): void => {
+      ipcRenderer.removeListener(IpcChannels.ShowSettingsTab, listener)
+    }
+  },
   translateLiveText: (
     text: string,
     sourceLocale: string,
@@ -129,8 +141,12 @@ const api = {
     ipcRenderer.invoke(IpcChannels.GetWhisperStatus),
   getOllamaStatus: (): Promise<OllamaStatus> =>
     ipcRenderer.invoke(IpcChannels.GetOllamaStatus),
+  ollamaChat: (messages: OllamaChatMessage[], model: string, think: boolean): Promise<OllamaChatResponse> =>
+    ipcRenderer.invoke(IpcChannels.OllamaChat, { messages, model, think }),
   openSystemSettings: (section: SystemSettingsSection): Promise<void> =>
     ipcRenderer.invoke(IpcChannels.OpenSystemSettings, section),
+  getPermissionsStatus: (): Promise<PermissionsStatus> =>
+    ipcRenderer.invoke(IpcChannels.GetPermissionsStatus),
   onModelProgress: (cb: (p: ModelDownloadProgress) => void): (() => void) => {
     const listener = (_: unknown, payload: ModelDownloadProgress): void => cb(payload)
     ipcRenderer.on(IpcChannels.ModelProgress, listener)

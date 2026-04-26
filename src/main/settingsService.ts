@@ -36,6 +36,9 @@ export const SETTINGS_KEYS = [
   'libreTranslateHost',
   'libreTranslateApiKey',
   'localOpusHost',
+  'liveSourceLocale',
+  'liveTargetLocale',
+  'liveCaptureMode',
   'captureMode',
   'pillCompact',
   'pillX',
@@ -62,7 +65,10 @@ const DEFAULT_SETTINGS: AppSettings = {
   appleSpeechRequiresOnDevice: false,
   liveTranslationProvider: 'libretranslate',
   libreTranslateHost: 'http://127.0.0.1:5000',
-  localOpusHost: 'http://127.0.0.1:5056'
+  localOpusHost: 'http://127.0.0.1:5056',
+  liveSourceLocale: 'en-US',
+  liveTargetLocale: 'pt-BR',
+  liveCaptureMode: 'auto'
 }
 
 async function loadSettings(): Promise<AppSettings> {

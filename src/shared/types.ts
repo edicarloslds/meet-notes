@@ -103,6 +103,25 @@ export interface OllamaStatus {
   error?: string
 }
 
+export type OllamaChatRole = 'user' | 'assistant'
+
+export interface OllamaChatMessage {
+  role: OllamaChatRole
+  content: string
+  thinking?: string
+}
+
+export interface OllamaChatRequest {
+  messages: OllamaChatMessage[]
+  model: string
+  think: boolean
+}
+
+export interface OllamaChatResponse {
+  message: OllamaChatMessage
+  model: string
+}
+
 export interface MeetingProgressEvent {
   meetingId: string
   stage: StageName
@@ -171,6 +190,9 @@ export interface AppSettings {
   libreTranslateHost?: string
   libreTranslateApiKey?: string
   localOpusHost?: string
+  liveSourceLocale?: string
+  liveTargetLocale?: string
+  liveCaptureMode?: AudioCaptureMode
   captureMode?: AudioCaptureMode
   pillCompact?: boolean
   pillX?: number
@@ -183,6 +205,13 @@ export interface AppSettings {
 }
 
 export type SystemSettingsSection = 'microphone' | 'screen-recording' | 'accessibility'
+
+export type PermissionState = 'granted' | 'denied' | 'not-determined' | 'restricted' | 'unknown' | 'unsupported'
+
+export interface PermissionsStatus {
+  screenRecording: PermissionState
+  microphone: PermissionState
+}
 
 export interface WhisperStatus {
   binAvailable: boolean
@@ -213,6 +242,8 @@ export const IpcChannels = {
   ExportMeeting: 'meeting:export',
   ResetPillPosition: 'pill:reset-position',
   OpenLiveTranscript: 'pill:open-live-transcript',
+  OpenDashboardSettings: 'dashboard:open-settings',
+  ShowSettingsTab: 'dashboard:show-settings-tab',
   SetPillCompact: 'pill:set-compact',
   GetPillPosition: 'pill:get-position',
   SetPillPosition: 'pill:set-position',
@@ -233,7 +264,9 @@ export const IpcChannels = {
   ModelProgress: 'models:progress',
   GetWhisperStatus: 'whisper:status',
   GetOllamaStatus: 'ollama:status',
+  OllamaChat: 'ollama:chat',
   OpenSystemSettings: 'system:open-settings',
+  GetPermissionsStatus: 'system:permissions-status',
   StartMeetingChunks: 'audio:start-chunks',
   SubmitAudioChunk: 'audio:submit-chunk',
   SubmitLiveAudioFrame: 'audio:submit-live-frame',

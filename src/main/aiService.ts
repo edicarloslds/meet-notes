@@ -6,6 +6,8 @@ import ffmpegStatic from 'ffmpeg-static'
 import {
   ActionItem,
   OLLAMA_NOT_READY_MARKER,
+  OllamaChatRequest,
+  OllamaChatResponse,
   OllamaStatus,
   ProcessAudioResult,
   StageName,
@@ -78,6 +80,12 @@ Todo o conteúdo textual — títulos de seção, resumo e tarefas — deve esta
 
 Responda estritamente como JSON válido, sem texto antes ou depois.`
 
+const CHAT_SYSTEM_PROMPT =
+  'Responda somente em português do Brasil. Seja claro, natural e direto. Se o usuário pedir outro idioma explicitamente, use o idioma pedido.'
+
+const CHAT_USER_PREFIX =
+  'Responda em português do Brasil, com uma resposta curta e natural.\n\nMensagem do usuário:'
+
 function extractJson(raw: string): string {
   const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)
   if (fenced) return fenced[1].trim()
@@ -129,6 +137,67 @@ async function callOllama(transcript: string, signal?: AbortSignal): Promise<str
   }
   const data = (await res.json()) as { message?: { content?: string } }
   return data.message?.content ?? ''
+}
+
+export async function chatWithOllama(
+  request: OllamaChatRequest,
+  signal?: AbortSignal
+): Promise<OllamaChatResponse> {
+  const host = getSettingSync('ollamaHost') || OLLAMA_HOST_DEFAULT
+  const model = request.model.trim() || getSettingSync('ollamaModel') || OLLAMA_MODEL_DEFAULT
+  const messages = request.messages
+    .filter((message) => message.content.trim())
+    .map((message, index, all) => ({
+      role: message.role,
+      content:
+        index === all.length - 1 && message.role === 'user'
+          ? `${CHAT_USER_PREFIX}\n${message.content}`
+          : message.content
+    }))
+
+  if (messages.length === 0) {
+    throw new Error('Envie uma mensagem para iniciar o chat.')
+  }
+
+  const res = await fetch(`${host}/api/chat`, {
+    method: 'POST',
+    signal,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model,
+      stream: false,
+      think: request.think,
+      options: {
+        temperature: 0.1,
+        top_p: 0.8,
+        repeat_penalty: 1.15
+      },
+      messages: [
+        { role: 'system', content: CHAT_SYSTEM_PROMPT },
+        ...messages
+      ]
+    })
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`Ollama request failed (${res.status}): ${text}`)
+  }
+  const data = (await res.json()) as {
+    model?: string
+    message?: {
+      role?: string
+      content?: string
+      thinking?: string
+    }
+  }
+  return {
+    model: data.model ?? model,
+    message: {
+      role: 'assistant',
+      content: data.message?.content ?? '',
+      thinking: data.message?.thinking
+    }
+  }
 }
 
 export async function summarizeTranscript(
